@@ -1,0 +1,43 @@
+SafeStay Hub - Frontend Design Documentation
+ 1. Home Page (Public Landing Page)
+ • Header: Logo, navigation links (Home, Explore Hostels, About, Contact, Login/Register),
+ language selector, 'List Your Hostel' button.
+ • Hero Section: Background image, title 'Find Safe & Verified Hostels Near You', search bar
+ (Location, Price Range, Gender, Amenities), 'Search Now' button.
+ • Features Section: Cards for Police-verified Listings, SOS Emergency Button, Digital Contracts,
+ AR Room Tours, Food Delivery, Real-time Support.
+ • AR/360° Tour Preview: Embedded demo of a virtual room walkthrough.
+ • Testimonials: Cards with tenant feedback and ratings.
+ • Footer: Terms, Privacy, Support, Contact info, social media links.
+ 2. Tenant Dashboard
+ • Sidebar: Dashboard, My Hostel, Canteen & Food Preferences, Feedback & Suggestions,
+ Payments, Settings.
+ • Dashboard: Quick overview (Hostel Name, Rent, Canteen Expense, Notifications).
+ • Canteen Section: Weekly meal plan, Veg/Non-Veg selector, 10% discount if skipping meals.
+ • Feedback: Form to submit hostel feedback (cleanliness, safety, etc.), visual graphs.
+ • Payments: Hostel rent + canteen expenses, integrated Razorpay/Stripe button.
+ 3. Hostel Owner Dashboard
+ • Sidebar: Dashboard, Manage Hostels, Upload 360° Media, Tenant Management, Feedback,
+ Profile.
+ • Dashboard Overview: Active Hostels, Rooms Available, Pending Verifications, Tenant
+ Requests.
+ • Manage Hostels: Update availability, edit details, view tenant reports.
+ • Media Upload: Drag-drop 360° upload, preview, submit for verification.
+ • Feedback: Charts summarizing tenant feedback and ratings.
+ 4. Canteen Owner Dashboard
+ • Sidebar: Dashboard, Orders Management, Tenant Preferences, Feedback, Delivery
+ Coordination, Settings.
+ • Dashboard: KPIs (Orders Today, Active Tenants, Ratings, Pending Deliveries).
+ • Orders Management: Table of orders with Accept, Forward, Delivered actions.
+ • Tenant Preferences: Weekly preferences chart, Veg/Non-Veg stats, dish planning.
+ • Feedback: View and reply to tenant feedback, mark as 'Action Taken'.
+ • Delivery Management: Real-time tracking and delivery confirmation.
+ Frontend Tech Stack
+ • Framework: React + Vite
+ • Styling: Tailwind CSS + ShadCN UI
+ • Animations: Framer Motion
+ • Charts: Recharts for analytics
+ • State Management: Redux Toolkit or Zustand
+ • Routing: React Router DOM
+ • API Calls: Axios or React Query
+ • Auth: JWT / OAuth2 integration with Node.js backend

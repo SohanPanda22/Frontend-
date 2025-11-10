@@ -10,7 +10,13 @@ PORT=5000
 MONGO_URI=mongodb://localhost:27017/safestay
 JWT_SECRET=your_jwt_secret_key_minimum_32_characters
 FRONTEND_URL=http://localhost:3000
+
+# Razorpay (Required for payment processing)
+RAZORPAY_KEY_ID=your_razorpay_key_id
+RAZORPAY_KEY_SECRET=your_razorpay_key_secret
 ```
+
+**Important:** Razorpay credentials are **required** for the canteen ordering system. Without them, users will not be able to create orders.
 
 ## Optional Service Integrations
 
@@ -41,24 +47,26 @@ CLOUDINARY_API_SECRET=your_api_secret
 ```
 **Effect if not configured**: Image uploads will fail gracefully
 
-### Razorpay (Payment Processing) - Optional
-```env
-RAZORPAY_KEY_ID=your_razorpay_key_id
-RAZORPAY_KEY_SECRET=your_razorpay_key_secret
-```
-**Effect if not configured**: Payment processing will be disabled
-
 ## Quick Start Setup
 
 1. Copy the variables above
 2. Create a `.env` file in the `backend` directory
-3. Fill in the **Required Variables** with appropriate values
+3. Fill in the **Required Variables** with appropriate values (including Razorpay credentials)
 4. Leave optional services empty if you don't need them
 5. Start the server: `npm start`
 
+## Getting Razorpay Credentials
+
+1. Sign up at https://razorpay.com/
+2. Navigate to Settings → API Keys
+3. Generate test mode keys (for development)
+4. Copy the Key ID and Key Secret to your `.env` file
+5. For production, generate live mode keys
+
 ## Notes
 
-- All optional services are now configured to handle missing credentials gracefully
+- Razorpay credentials are **required** for order creation to work
+- All other optional services are configured to handle missing credentials gracefully
 - The app will log messages when optional services are not configured
 - You can add credentials later without breaking existing functionality
 

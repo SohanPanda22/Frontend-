@@ -1,113 +1,74 @@
-import axios from 'axios';
-import io from 'socket.io-client';
+import axios from 'axios'
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
-// Create axios instance
 const api = axios.create({
-  baseURL: `${API_URL}/api`,
+  baseURL: `${API_BASE_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
-});
+})
 
 // Add token to requests
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('token')
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      config.headers.Authorization = `Bearer ${token}`
     }
-    return config;
+    return config
   },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+  (error) => Promise.reject(error)
+)
 
-// Handle 401 errors and response parsing
+// Handle responses
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+      localStorage.removeItem('token')
+      window.location.href = '/login'
     }
-    
-    // Log detailed error for debugging
-    console.error('API Error:', {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status,
-    });
-    
-    return Promise.reject(error);
+    return Promise.reject(error)
   }
-);
+)
 
-// Initialize Socket.IO connection
-export const socket = io(API_URL);
-
-// Auth API
+// Auth API calls
 export const authAPI = {
   register: (data) => api.post('/auth/register', data),
+  verifyOTP: (data) => api.post('/auth/verify-otp', data),
+  resendOTP: (data) => api.post('/auth/resend-otp', data),
   login: (data) => api.post('/auth/login', data),
-  getMe: () => api.get('/auth/me'),
-  updateProfile: (data) => api.put('/auth/profile', data),
-};
+  getProfile: () => api.get('/auth/profile'),
+}
 
-// Tenant API
-export const tenantAPI = {
-  searchHostels: (params) => api.get('/tenant/hostels/search', { params }),
-  getHostelDetails: (id) => api.get(`/tenant/hostels/${id}`),
-  getMyExpenses: () => api.get('/tenant/expenses'),
-  addExpense: (data) => api.post('/tenant/expenses', data),
-  submitFeedback: (data) => api.post('/tenant/feedback', data),
-  getMyContracts: () => api.get('/tenant/contracts'),
-};
-
-// Owner API
-export const ownerAPI = {
-  createHostel: (data) => api.post('/owner/hostels', data),
+// Hostel API calls
+export const hostelAPI = {
+  search: (params) => api.get('/hostels/search', { params }),
+  getById: (id) => api.get(`/hostels/${id}`),
+  create: (data) => api.post('/owner/hostels', data),
+  update: (id, data) => api.put(`/owner/hostels/${id}`, data),
   getMyHostels: () => api.get('/owner/hostels'),
-  updateHostel: (id, data) => api.put(`/owner/hostels/${id}`, data),
-  uploadHostelMedia: (id, formData) => api.post(`/owner/hostels/${id}/upload`, formData),
-  createRoom: (hostelId, data) => api.post(`/owner/hostels/${hostelId}/rooms`, data),
-  getHostelRooms: (hostelId) => api.get(`/owner/hostels/${hostelId}/rooms`),
-  updateRoom: (id, data) => api.put(`/owner/rooms/${id}`, data),
-};
+}
 
-// Canteen API
+// Canteen API calls
 export const canteenAPI = {
-  createCanteen: (data) => api.post('/canteen', data),
-  getMyCanteens: () => api.get('/canteen/my-canteens'),
-  getCanteenMenu: (canteenId) => api.get(`/canteen/${canteenId}/menu`),
-  addMenuItem: (canteenId, data) => api.post(`/canteen/${canteenId}/menu`, data),
-  updateMenuItem: (itemId, data) => api.put(`/canteen/menu/${itemId}`, data),
+  getMenus: () => api.get('/canteen/menus'),
   createOrder: (data) => api.post('/canteen/orders', data),
+  getOrders: () => api.get('/canteen/orders'),
   verifyPayment: (data) => api.post('/canteen/orders/verify-payment', data),
-  getMyOrders: () => api.get('/canteen/my-orders'),
-  getProviderOrders: () => api.get('/canteen/orders'),
-  updateOrderStatus: (orderId, status) => api.put(`/canteen/orders/${orderId}/status`, { status }),
-};
+}
 
-// Admin API
-export const adminAPI = {
-  getAllUsers: () => api.get('/admin/users'),
-  getDashboardStats: () => api.get('/admin/stats'),
-  getAllHostels: () => api.get('/admin/hostels'),
-  verifyHostel: (id, data) => api.put(`/admin/hostels/${id}/verify`, data),
-  toggleUserStatus: (id) => api.put(`/admin/users/${id}/toggle-status`),
-};
-
-// Contract API
+// Contract API calls
 export const contractAPI = {
-  createContract: (data) => api.post('/contract', data),
-  signContract: (id, data) => api.post(`/contract/${id}/sign`, data),
-  getContracts: () => api.get('/contract'),
-  getContractDetails: (id) => api.get(`/contract/${id}`),
-};
+  getContracts: () => api.get('/contracts'),
+  getById: (id) => api.get(`/contracts/${id}`),
+}
 
-export default api;
+// Expense API calls
+export const expenseAPI = {
+  getExpenses: () => api.get('/expenses'),
+  create: (data) => api.post('/expenses', data),
+}
 
+export default api

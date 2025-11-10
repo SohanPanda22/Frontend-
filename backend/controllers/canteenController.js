@@ -115,6 +115,14 @@ const createOrder = async (req, res) => {
   try {
     const { canteen, items, deliveryAddress, specialInstructions } = req.body;
 
+    // Check if Razorpay is configured
+    if (!razorpay || !process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payment service not configured. Please contact administrator.',
+      });
+    }
+
     // Calculate total
     let totalAmount = 0;
     const orderItems = [];
@@ -140,14 +148,6 @@ const createOrder = async (req, res) => {
     // Generate order number
     const orderNumber = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
-    // Check if Razorpay is configured
-    if (!razorpay) {
-      return res.status(500).json({
-        success: false,
-        message: 'Payment gateway not configured. Please contact administrator.',
-      });
-    }
-
     // Create Razorpay order
     const razorpayOrder = await razorpay.orders.create({
       amount: totalAmount * 100, // Amount in paise
@@ -155,7 +155,7 @@ const createOrder = async (req, res) => {
       receipt: orderNumber,
     });
 
-    const order = await Order.create({
+    const orderData = {
       orderNumber,
       tenant: req.user.id,
       canteen,
@@ -165,15 +165,20 @@ const createOrder = async (req, res) => {
       deliveryAddress,
       specialInstructions,
       razorpayOrderId: razorpayOrder.id,
-    });
+    };
+
+    const order = await Order.create(orderData);
 
     res.status(201).json({
       success: true,
       data: order,
       razorpayOrderId: razorpayOrder.id,
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
+      amount: totalAmount,
+      currency: 'INR',
     });
   } catch (error) {
+    console.error('Order creation error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -185,12 +190,35 @@ const verifyPayment = async (req, res) => {
   try {
     const { orderId, razorpayPaymentId, razorpaySignature } = req.body;
 
+    if (!razorpayPaymentId || !razorpaySignature) {
+      return res.status(400).json({
+        success: false,
+        message: 'razorpayPaymentId and razorpaySignature are required',
+      });
+    }
+
     const order = await Order.findById(orderId);
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
+    if (order.tenant.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to verify this order' });
+    }
+
+    if (order.paymentStatus === 'paid') {
+      return res.status(400).json({ success: false, message: 'Payment already verified' });
+    }
+
+    if (!order.razorpayOrderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid order - no Razorpay order ID found',
+      });
+    }
+
+    // Verify Razorpay signature
     const sign = razorpayPaymentId + '|' + order.razorpayOrderId;
     const expectedSign = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
@@ -201,15 +229,26 @@ const verifyPayment = async (req, res) => {
       order.paymentStatus = 'paid';
       order.razorpayPaymentId = razorpayPaymentId;
       order.orderStatus = 'confirmed';
+      order.paymentMethod = 'online';
       await order.save();
 
-      res.json({ success: true, message: 'Payment verified successfully', data: order });
+      console.log(`✅ Payment verified for order: ${order.orderNumber}`);
+
+      return res.json({
+        success: true,
+        message: 'Payment verified successfully',
+        data: order,
+      });
     } else {
       order.paymentStatus = 'failed';
       await order.save();
-      res.status(400).json({ success: false, message: 'Invalid payment signature' });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment signature',
+      });
     }
   } catch (error) {
+    console.error('Payment verification error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -43,6 +43,19 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // OTP fields for phone verification
+  otp: {
+    type: String,
+    select: false,
+  },
+  otpExpiry: {
+    type: Date,
+    select: false,
+  },
+  phoneVerified: {
+    type: Boolean,
+    default: false,
+  },
   // Tenant specific fields
   foodPreference: {
     type: String,

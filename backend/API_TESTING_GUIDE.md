@@ -57,6 +57,29 @@ Content-Type: application/json
 
 **Action:** Save the token and user ID from response.
 
+**Common validation errors**
+
+- The API validates input and will return HTTP 400 with an `errors` array when a field is missing or invalid. Typical causes:
+  - Missing `name`, `email`, `phone`, `password`, or `role`.
+  - `email` is not a valid email address string.
+  - `phone` must be exactly 10 digits (e.g., `9876543210`).
+  - `password` must be at least 6 characters.
+  - `role` must be one of `master_admin`, `owner`, `canteen_provider`, or `tenant`.
+
+If you get a 400 response, inspect the JSON body — it will look like:
+
+```json
+{
+  "success": false,
+  "errors": [
+    { "msg": "Valid email is required", "param": "email", "location": "body" },
+    { "msg": "Valid 10-digit phone number is required", "param": "phone", "location": "body" }
+  ]
+}
+```
+
+Make sure your request includes all required fields and that `Content-Type: application/json` is set.
+
 ---
 
 ### 2.2 Login (No Auth Required)
@@ -486,6 +509,36 @@ Content-Type: application/json
 }
 ```
 
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "ORDER_ID",
+    "orderNumber": "ORD1730300000123",
+    "totalAmount": 300,
+    "orderStatus": "pending",
+    "paymentStatus": "pending",
+    "razorpayOrderId": "order_ABC123XYZ"
+  },
+  "razorpayOrderId": "order_ABC123XYZ",
+  "razorpayKeyId": "rzp_test_xxxxxxxxxxxx",
+  "amount": 300,
+  "currency": "INR"
+}
+```
+
+**Important - Payment Flow:**
+
+The response does NOT include `razorpay_payment_id` or `razorpay_signature` because those are only generated AFTER the user completes payment. Here's the complete flow:
+
+1. **Create Order (this endpoint)** → Get `razorpayOrderId` and `razorpayKeyId`
+2. **Frontend** → Use the `razorpayOrderId` and `razorpayKeyId` to initialize Razorpay checkout
+3. **User pays** → Razorpay returns `razorpay_payment_id`, `razorpay_order_id`, and `razorpay_signature` to your frontend
+4. **Verify Payment** → Send those values to the verify-payment endpoint (5.2.3 below)
+
+**Note:** Razorpay credentials must be configured in `.env` for orders to work. If not configured, you'll get a 503 error.
+
 ---
 
 #### 5.2.3 Verify Payment (Protected - Tenant)
@@ -500,11 +553,90 @@ Content-Type: application/json
 
 {
   "orderId": "ORDER_ID",
-  "razorpay_order_id": "razorpay_order_id",
-  "razorpay_payment_id": "razorpay_payment_id",
-  "razorpay_signature": "razorpay_signature"
+  "razorpayPaymentId": "pay_ABC123XYZ",
+  "razorpaySignature": "signature_from_razorpay_response"
 }
 ```
+
+**IMPORTANT - Field Definitions:**
+- `orderId` → MongoDB `_id` from the order (found in `data._id` of create order response)
+- `razorpayPaymentId` → Payment ID from Razorpay after user pays
+- `razorpaySignature` → Signature from Razorpay after user pays
+
+**Common Mistake:**
+❌ DO NOT use `razorpayOrderId` (e.g., `order_ABC123`) as the `orderId`
+✅ USE the MongoDB `_id` (e.g., `67423abc123def...`) as the `orderId`
+
+**Example Values:**
+```json
+{
+  "orderId": "67423abc123def456789",           // ← MongoDB _id
+  "razorpayPaymentId": "pay_TEST123456",       // ← From Razorpay
+  "razorpaySignature": "a1b2c3d4e5f6..."      // ← Generated signature
+}
+```
+
+**Response (Success):**
+```json
+{
+  "success": true,
+  "message": "Payment verified successfully",
+  "data": {
+    "_id": "ORDER_ID",
+    "orderNumber": "ORD1730300000123",
+    "orderStatus": "confirmed",
+    "paymentStatus": "paid",
+    "razorpayPaymentId": "pay_ABC123XYZ"
+  }
+}
+```
+
+**Note:** The `razorpayPaymentId` and `razorpaySignature` come from Razorpay's frontend SDK after the user completes payment, NOT from the create order response.
+
+**Testing without Frontend:**
+
+Since you don't have a frontend yet, you need to manually generate the payment signature. Here's how:
+
+1. **Create an order** (Step 5.2.2) and save BOTH IDs:
+   - `data._id` → Use this as `orderId` in verify payment ✅
+   - `razorpayOrderId` → Use this to generate the signature
+
+2. **Generate a mock payment ID**: `pay_` + any random string (e.g., `pay_ABC123XYZ`)
+
+3. **Generate the signature** using the `razorpayOrderId` (NOT the MongoDB _id):
+
+```javascript
+const crypto = require('crypto');
+
+const razorpayOrderId = 'order_ABC123XYZ'; // From create order response
+const razorpayPaymentId = 'pay_TEST123456'; // Mock payment ID
+const razorpayKeySecret = 'your_razorpay_key_secret'; // From .env
+
+const sign = razorpayPaymentId + '|' + razorpayOrderId;
+const signature = crypto
+  .createHmac('sha256', razorpayKeySecret)
+  .update(sign.toString())
+  .digest('hex');
+
+console.log('Payment ID:', razorpayPaymentId);
+console.log('Signature:', signature);
+```
+
+4. **Use the generated values** in the verify payment request with the MongoDB `orderId`
+
+**Automated Testing:**
+
+Run the provided test script:
+```bash
+node test-payment.js
+```
+
+This script automatically:
+- Creates a tenant user
+- Sets up a canteen and menu item
+- Creates an order
+- Generates a valid payment signature
+- Verifies the payment
 
 ---
 

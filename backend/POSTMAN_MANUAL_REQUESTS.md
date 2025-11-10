@@ -76,7 +76,97 @@ Content-Type: application/json
 }
 ```
 
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent successfully to your phone number",
+  "data": {
+    "userId": "64abc123...",
+    "phone": "9876543210"
+  }
+}
+```
+
+**Note:** Check server logs for OTP if Twilio not configured. The OTP will appear as:
+```
+SMS (not sent - Twilio not configured): Your SafeStay Hub verification code is: 123456...
+```
+
+---
+
+### 2a. Verify OTP (Complete Registration)
+
+**Method:** POST
+
+**URL:**
+```
+http://localhost:5000/api/auth/verify-otp
+```
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Body (raw JSON):**
+```json
+{
+  "phone": "9876543210",
+  "otp": "123456"
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Phone verified successfully",
+  "data": {
+    "_id": "64abc123...",
+    "name": "John Tenant",
+    "email": "tenant@test.com",
+    "phone": "9876543210",
+    "role": "tenant",
+    "token": "eyJhbGc..."
+  }
+}
+```
+
 **Response:** Save the `token` from response → Set `tenantToken` variable
+
+---
+
+### 2b. Resend OTP (Optional)
+
+**Method:** POST
+
+**URL:**
+```
+http://localhost:5000/api/auth/resend-otp
+```
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Body (raw JSON):**
+```json
+{
+  "phone": "9876543210"
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "OTP resent successfully"
+}
+```
+
+**Note:** Use this if OTP expired or wasn't received. Check server logs for new OTP.
 
 ---
 
@@ -105,7 +195,19 @@ Content-Type: application/json
 }
 ```
 
-**Response:** Save the `token` from response → Set `ownerToken` variable
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent successfully to your phone number",
+  "data": {
+    "userId": "...",
+    "phone": "9876543211"
+  }
+}
+```
+
+**Next Step:** Use request 2a to verify OTP with phone `9876543211` and get `ownerToken`
 
 ---
 
@@ -134,7 +236,19 @@ Content-Type: application/json
 }
 ```
 
-**Response:** Save the `token` from response → Set `providerToken` variable
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent successfully to your phone number",
+  "data": {
+    "userId": "...",
+    "phone": "9876543212"
+  }
+}
+```
+
+**Next Step:** Use request 2a to verify OTP with phone `9876543212` and get `providerToken`
 
 ---
 
@@ -163,7 +277,19 @@ Content-Type: application/json
 }
 ```
 
-**Response:** Save the `token` from response → Set `adminToken` variable
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent successfully to your phone number",
+  "data": {
+    "userId": "...",
+    "phone": "9876543213"
+  }
+}
+```
+
+**Next Step:** Use request 2a to verify OTP with phone `9876543213` and get `adminToken`
 
 ---
 
@@ -771,9 +897,28 @@ Authorization: Bearer {{tenantToken}}
 ```json
 {
   "orderId": "{{orderId}}",
-  "razorpay_order_id": "order_xxx",
-  "razorpay_payment_id": "pay_xxx",
-  "razorpay_signature": "signature_xxx"
+  "razorpayPaymentId": "pay_TEST123456",
+  "razorpaySignature": "generated_signature_here"
+}
+```
+
+**IMPORTANT:** 
+- `orderId` is the MongoDB `_id` from the order response (e.g., `67423abc123...`)
+- NOT the `razorpayOrderId` (e.g., `order_RZeq99ZuwQV7WC`)
+- Use `data._id` from the create order response, not `razorpayOrderId`
+
+**To generate signature for testing without frontend:**
+1. Run: `node generate-signature.js`
+2. Enter the `razorpayOrderId` (e.g., `order_RZeq99ZuwQV7WC`)
+3. It will generate a valid `razorpayPaymentId` and `razorpaySignature`
+4. Use those values here along with the MongoDB `orderId`
+
+**Example:**
+```json
+{
+  "orderId": "67423abc123def456...",
+  "razorpayPaymentId": "pay_1730300123abc",
+  "razorpaySignature": "a1b2c3d4e5f6..."
 }
 ```
 
@@ -1078,19 +1223,67 @@ if (pm.response.code === 200) {
 
 ---
 
+## 📱 OTP Registration Flow
+
+### How OTP Registration Works:
+
+1. **Register** (`POST /api/auth/register`) → Creates inactive user, sends OTP
+2. **Check server logs** for OTP (if Twilio not configured)
+   - Look for: `SMS (not sent - Twilio not configured): Your SafeStay Hub verification code is: 123456`
+3. **Verify OTP** (`POST /api/auth/verify-otp`) → Activates account, returns token
+4. **Use token** for authenticated requests
+
+### Postman Tests Script for Verify OTP:
+
+Add this to the "Tests" tab of the Verify OTP request:
+
+```javascript
+if (pm.response.code === 201) {
+    const jsonData = pm.response.json();
+    const role = jsonData.data.role;
+    
+    // Set token based on role
+    if (role === 'tenant') {
+        pm.environment.set("tenantToken", jsonData.data.token);
+    } else if (role === 'owner') {
+        pm.environment.set("ownerToken", jsonData.data.token);
+    } else if (role === 'canteen_provider') {
+        pm.environment.set("providerToken", jsonData.data.token);
+    } else if (role === 'master_admin') {
+        pm.environment.set("adminToken", jsonData.data.token);
+    }
+    
+    pm.environment.set("userId", jsonData.data._id);
+    console.log(`Token saved for ${role}: ${jsonData.data.token.substring(0, 20)}...`);
+}
+```
+
+### Important Notes:
+
+- **OTP expires in 10 minutes**
+- **OTP is 6 digits** (e.g., 123456)
+- Use **Resend OTP** if expired or not received
+- Account is **inactive until verified**
+- Cannot login until OTP is verified
+
+---
+
 ## ✅ Testing Order
 
 1. Test Health Check
-2. Register all users (tenant, owner, provider, admin)
-3. Login to get tokens
-4. Owner: Create hostel → Create rooms
-5. Provider: Create canteen → Add menu items
-6. Tenant: Search hostels → Create expenses → Submit feedback
-7. Owner: Create contract
-8. Tenant: Sign contract
-9. Tenant: Create order
-10. Provider: Update order status
-11. Admin: View stats → Verify hostels
+2. Register all users (tenant, owner, provider, admin) - **Sends OTP**
+3. **Verify OTP for each user** (request 2a) - **Get tokens**
+4. Login to get tokens (alternative to OTP verification)
+5. Owner: Create hostel → Create rooms
+6. Provider: Create canteen → Add menu items
+7. Tenant: Search hostels → Create expenses → Submit feedback
+8. Owner: Create contract
+9. Tenant: Sign contract
+10. Tenant: Create order
+11. Provider: Update order status
+12. Admin: View stats → Verify hostels
+
+**Note:** For new registrations, you must complete OTP verification (step 3) before the account becomes active.
 
 ---
 
@@ -1113,6 +1306,31 @@ if (pm.response.code === 200) {
 3. **Variables:** Use `{{variableName}}` syntax in URLs
 4. **Environment:** Make sure correct environment is selected
 5. **Order:** Follow the testing order for dependencies
+6. **OTP Testing:** Check server console logs for OTP codes
+
+---
+
+## 🔧 OTP Troubleshooting
+
+### OTP Not Received?
+- Check server console logs for: `SMS (not sent - Twilio not configured): Your SafeStay Hub verification code is: XXXXXX`
+- The OTP will be visible in the logs if Twilio credentials are not configured
+- OTP is valid for **10 minutes only**
+
+### Invalid OTP Error?
+- Make sure you're using the latest OTP from server logs
+- Check OTP hasn't expired (10 minutes)
+- Use the **Resend OTP** request to get a new code
+
+### Account Not Activating?
+- Make sure you completed the **Verify OTP** step
+- Check the response shows `"success": true`
+- Token should be returned in the verify-otp response
+
+### Cannot Login?
+- New accounts must verify OTP before login
+- Use **Verify OTP** request first, then you can login
+- Or use the token directly from verify-otp response
 
 ---
 
