@@ -1,6 +1,7 @@
 const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
 const cloudinary = require('../config/cloudinary');
+const User = require('../models/User');
 
 // @desc    Create new hostel
 // @route   POST /api/owner/hostels
@@ -66,6 +67,54 @@ const updateHostel = async (req, res) => {
   }
 };
 
+// @desc    Delete hostel and its rooms
+// @route   DELETE /api/owner/hostels/:id
+// @access  Private/Owner
+const deleteHostel = async (req, res) => {
+  try {
+    const hostel = await Hostel.findById(req.params.id);
+    if (!hostel) {
+      return res.status(404).json({ success: false, message: 'Hostel not found' });
+    }
+    if (hostel.owner.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    // Optionally remove media from Cloudinary
+    const destroyPromises = [];
+    (hostel.photos || []).forEach((p) => {
+      if (p.publicId) {
+        destroyPromises.push(cloudinary.uploader.destroy(p.publicId, { resource_type: 'image' }));
+      }
+    });
+    (hostel.video360 || []).forEach((v) => {
+      if (v.publicId) {
+        destroyPromises.push(cloudinary.uploader.destroy(v.publicId, { resource_type: 'video' }));
+      }
+    });
+    await Promise.allSettled(destroyPromises);
+
+    await Room.deleteMany({ hostel: hostel._id });
+
+    // Remove from user's ownedHostels
+    try {
+      const user = await User.findById(req.user.id);
+      if (user) {
+        user.ownedHostels = (user.ownedHostels || []).filter(
+          (hId) => hId.toString() !== hostel._id.toString()
+        );
+        await user.save();
+      }
+    } catch {}
+
+    await hostel.deleteOne();
+
+    res.json({ success: true, message: 'Hostel deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Upload hostel photos/videos
 // @route   POST /api/owner/hostels/:id/upload
 // @access  Private/Owner
@@ -112,6 +161,41 @@ const uploadHostelMedia = async (req, res) => {
     await hostel.save();
 
     res.json({ success: true, data: hostel });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Delete a media item by publicId
+// @route   DELETE /api/owner/hostels/:id/media
+// @access  Private/Owner
+const deleteHostelMedia = async (req, res) => {
+  try {
+    const { publicId } = req.query;
+    const hostel = await Hostel.findById(req.params.id);
+    if (!hostel) {
+      return res.status(404).json({ success: false, message: 'Hostel not found' });
+    }
+    if (hostel.owner.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    if (!publicId) {
+      return res.status(400).json({ success: false, message: 'publicId is required' });
+    }
+
+    // Remove from arrays
+    hostel.photos = (hostel.photos || []).filter((p) => p.publicId !== publicId);
+    hostel.video360 = (hostel.video360 || []).filter((v) => v.publicId !== publicId);
+
+    // Try destroy both types (image/video)
+    await Promise.allSettled([
+      cloudinary.uploader.destroy(publicId, { resource_type: 'image' }),
+      cloudinary.uploader.destroy(publicId, { resource_type: 'video' }),
+    ]);
+
+    await hostel.save();
+
+    res.json({ success: true, message: 'Media removed', data: hostel });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -199,12 +283,46 @@ const updateRoom = async (req, res) => {
   }
 };
 
+// @desc    Delete room
+// @route   DELETE /api/owner/rooms/:id
+// @access  Private/Owner
+const deleteRoom = async (req, res) => {
+  try {
+    const room = await Room.findById(req.params.id).populate('hostel');
+    if (!room) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+    if (room.hostel.owner.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    await room.deleteOne();
+
+    // Update hostel counters
+    const hostel = await Hostel.findById(room.hostel._id);
+    if (hostel) {
+      hostel.totalRooms = Math.max((hostel.totalRooms || 0) - 1, 0);
+      if (room.isAvailable) {
+        hostel.availableRooms = Math.max((hostel.availableRooms || 0) - 1, 0);
+      }
+      await hostel.save();
+    }
+
+    res.json({ success: true, message: 'Room deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   createHostel,
   getMyHostels,
   updateHostel,
+  deleteHostel,
   uploadHostelMedia,
+  deleteHostelMedia,
   createRoom,
   getHostelRooms,
   updateRoom,
+  deleteRoom,
 };

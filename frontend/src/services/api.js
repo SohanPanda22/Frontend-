@@ -40,6 +40,7 @@ export const authAPI = {
   resendOTP: (data) => api.post('/auth/resend-otp', data),
   login: (data) => api.post('/auth/login', data),
   getProfile: () => api.get('/auth/profile'),
+  updateProfile: (data) => api.put('/auth/profile', data),
 }
 
 // Hostel API calls
@@ -69,6 +70,26 @@ export const contractAPI = {
 export const expenseAPI = {
   getExpenses: () => api.get('/expenses'),
   create: (data) => api.post('/expenses', data),
+}
+
+// Owner API calls
+export const ownerAPI = {
+  getMyHostels: () => api.get('/owner/hostels'),
+  createHostel: (data) => api.post('/owner/hostels', data),
+  updateHostel: (id, data) => api.put(`/owner/hostels/${id}`, data),
+  deleteHostel: (id) => api.delete(`/owner/hostels/${id}`),
+  uploadHostelMedia: (hostelId, files) => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f)
+    return api.post(`/owner/hostels/${hostelId}/upload`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  createRoom: (hostelId, data) => api.post(`/owner/hostels/${hostelId}/rooms`, data),
+  getHostelRooms: (hostelId) => api.get(`/owner/hostels/${hostelId}/rooms`),
+  updateRoom: (roomId, data) => api.put(`/owner/rooms/${roomId}`, data),
+  deleteRoom: (roomId) => api.delete(`/owner/rooms/${roomId}`),
+  deleteMedia: (hostelId, publicId) => api.delete(`/owner/hostels/${hostelId}/media`, { params: { publicId } }),
 }
 
 export default api

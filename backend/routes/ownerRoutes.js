@@ -21,14 +21,17 @@ router.route('/hostels')
   .get(getMyHostels);
 
 router.route('/hostels/:id')
-  .put(updateHostel);
+  .put(updateHostel)
+  .delete(require('../controllers/ownerController').deleteHostel);
 
 router.post('/hostels/:id/upload', upload.array('files', 10), uploadHostelMedia);
+router.delete('/hostels/:id/media', require('../controllers/ownerController').deleteHostelMedia);
 
 router.route('/hostels/:id/rooms')
   .post(createRoom)
   .get(getHostelRooms);
 
 router.put('/rooms/:id', updateRoom);
+router.delete('/rooms/:id', require('../controllers/ownerController').deleteRoom);
 
 module.exports = router;

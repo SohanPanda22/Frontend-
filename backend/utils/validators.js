@@ -15,13 +15,35 @@ const validateRegister = [
         }
         return true;
     }),
-    // Custom validation for role (accept both 'role' and 'userRole')
+    // Custom validation for role (accept aliases and normalize to model enum)
     body().custom((value, { req }) => {
-        const userRole = req.body.userRole || req.body.role || 'tenant';
+        const normalizeRole = (r) => {
+            if (!r) return 'tenant';
+            const v = String(r).toLowerCase();
+            switch (v) {
+                case 'admin':
+                case 'master_admin':
+                    return 'master_admin';
+                case 'provider':
+                case 'canteen':
+                case 'canteen_provider':
+                    return 'canteen_provider';
+                case 'owner':
+                    return 'owner';
+                case 'tenant':
+                default:
+                    return 'tenant';
+            }
+        };
+        const raw = req.body.userRole || req.body.role;
+        const normalized = normalizeRole(raw);
         const validRoles = ['master_admin', 'owner', 'canteen_provider', 'tenant'];
-        if (!validRoles.includes(userRole)) {
+        if (!validRoles.includes(normalized)) {
             throw new Error('Invalid role');
         }
+        // Persist normalized role for downstream handlers
+        req.body.role = normalized;
+        req.body.userRole = normalized;
         return true;
     }),
 ];

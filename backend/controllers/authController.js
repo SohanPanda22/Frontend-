@@ -11,10 +11,30 @@ const register = async (req, res) => {
   try {
     console.log(`[REGISTER] Raw request body:`, req.body);
     const { name, email, phoneNumber, phone, password, userRole, role } = req.body;
-    
+
     // Accept both phoneNumber and phone for compatibility
     const phoneNum = phoneNumber || phone;
-    const userRole_ = userRole || role || 'tenant';
+
+    // Normalize role aliases coming from frontend
+    const normalizeRole = (r) => {
+      if (!r) return 'tenant';
+      const value = String(r).toLowerCase();
+      switch (value) {
+        case 'admin':
+        case 'master_admin':
+          return 'master_admin';
+        case 'provider':
+        case 'canteen_provider':
+        case 'canteen':
+          return 'canteen_provider';
+        case 'owner':
+          return 'owner';
+        case 'tenant':
+        default:
+          return 'tenant';
+      }
+    };
+    const userRole_ = normalizeRole(userRole || role);
 
     console.log(`[REGISTER] Received registration request:`, { name, email, phoneNum, password: '***', userRole_ });
 

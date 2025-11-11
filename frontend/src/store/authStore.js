@@ -1,17 +1,55 @@
 import { create } from 'zustand'
 import { authAPI } from '../services/api'
 
+// Safely read and parse values from localStorage
+function getStoredUser() {
+  const raw = localStorage.getItem('user')
+  if (!raw || raw === 'undefined' || raw === 'null') return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    // If something invalid was stored earlier, clean it up
+    localStorage.removeItem('user')
+    return null
+  }
+}
+
+function getStoredToken() {
+  const raw = localStorage.getItem('token')
+  if (!raw || raw === 'undefined' || raw === 'null') return null
+  return raw
+}
+
+function normalizeUserRole(role) {
+  if (!role) return undefined
+  switch (role) {
+    case 'master_admin':
+      return 'admin'
+    case 'canteen_provider':
+      return 'provider'
+    default:
+      return role
+  }
+}
+
+function mapBackendUserToFrontend(user) {
+  if (!user) return null
+  const userRole = normalizeUserRole(user.userRole || user.role)
+  return { ...user, userRole }
+}
+
 export const useAuthStore = create((set) => ({
-  user: JSON.parse(localStorage.getItem('user') || 'null'),
-  token: localStorage.getItem('token') || null,
-  isAuthenticated: !!localStorage.getItem('token'),
+  user: mapBackendUserToFrontend(getStoredUser()),
+  token: getStoredToken(),
+  isAuthenticated: !!getStoredToken(),
   loading: false,
   error: null,
 
   setUser: (user) => {
-    set({ user })
+    const mapped = mapBackendUserToFrontend(user)
+    set({ user: mapped })
     if (user) {
-      localStorage.setItem('user', JSON.stringify(user))
+      localStorage.setItem('user', JSON.stringify(mapped))
     } else {
       localStorage.removeItem('user')
     }
@@ -30,10 +68,11 @@ export const useAuthStore = create((set) => ({
     set({ loading: true, error: null })
     try {
       const response = await authAPI.login(credentials)
-      const { token, user } = response.data.data
-      set({ token, user, isAuthenticated: true })
+      const { token, user, role } = response.data.data
+      const mappedUser = mapBackendUserToFrontend(user || { role })
+      set({ token, user: mappedUser, isAuthenticated: true, loading: false })
       localStorage.setItem('token', token)
-      localStorage.setItem('user', JSON.stringify(user))
+      localStorage.setItem('user', JSON.stringify(mappedUser))
       return response.data
     } catch (error) {
       const errorMsg = error.response?.data?.message || 'Login failed'
@@ -46,6 +85,8 @@ export const useAuthStore = create((set) => ({
     set({ loading: true, error: null })
     try {
       const response = await authAPI.register(userData)
+      // Do not auto-authenticate on register; move to OTP step in UI
+      set({ loading: false })
       return response.data
     } catch (error) {
       const errorMsg = error.response?.data?.message || 'Registration failed'
@@ -63,9 +104,10 @@ export const useAuthStore = create((set) => ({
       console.log('[AUTH STORE] API response:', response.data)
       const { token, user } = response.data.data
       console.log('[AUTH STORE] Extracted token and user:', { token, user })
-      set({ token, user, isAuthenticated: true, loading: false })
+      const mappedUser = mapBackendUserToFrontend(user)
+      set({ token, user: mappedUser, isAuthenticated: true, loading: false })
       localStorage.setItem('token', token)
-      localStorage.setItem('user', JSON.stringify(user))
+      localStorage.setItem('user', JSON.stringify(mappedUser))
       return response.data
     } catch (error) {
       console.error('[AUTH STORE] OTP verification error:', error)
