@@ -8,9 +8,12 @@ const User = require('../models/User');
 // @access  Private/Owner
 const createHostel = async (req, res) => {
   try {
+    // Mark hostels created by owners as verified by default
+    // (requirement: change verification status to 'verified' once the hostel owner adds it)
     const hostelData = {
       ...req.body,
       owner: req.user.id,
+      verificationStatus: 'verified',
     };
 
     const hostel = await Hostel.create(hostelData);
