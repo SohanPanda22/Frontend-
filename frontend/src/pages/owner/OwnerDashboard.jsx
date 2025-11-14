@@ -235,9 +235,9 @@ export default function OwnerDashboard() {
       <aside
         className={`${
           sidebarOpen ? 'w-64' : 'w-0'
-        } bg-primary text-white transition-all duration-300 overflow-hidden fixed md:relative z-40 h-full`}
+        } bg-primary text-white transition-all duration-300 overflow-hidden fixed md:relative z-40 h-full flex flex-col`}
       >
-        <div className="p-6">
+        <div className="p-6 flex-1 overflow-y-auto">
           <h1 className="text-2xl font-bold mb-8">SafeStay Hub</h1>
 
           <nav className="space-y-2">
@@ -256,7 +256,7 @@ export default function OwnerDashboard() {
           </nav>
         </div>
 
-        <div className="absolute bottom-6 left-6 right-6">
+        <div className="p-6 border-t border-blue-400">
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-2 bg-red-600 px-4 py-2 rounded-lg hover:bg-red-700 transition"
@@ -885,25 +885,27 @@ export default function OwnerDashboard() {
             <div className="card">
               <h3 className="text-2xl font-bold mb-4 text-text-dark">Upload 360° Media</h3>
 
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-text-dark mb-1">Select Hostel</label>
+                <select
+                  className="input"
+                  value={selectedHostelId}
+                  onChange={(e) => setSelectedHostelId(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <option value="">-- Choose a hostel --</option>
+                  {hostels.map((h) => (
+                    <option key={h._id} value={h._id}>{h.name}</option>
+                  ))}
+                </select>
+              </div>
+
               <div
                 className="upload-btn mb-4"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleDrop}
                 onClick={() => document.getElementById('mediaPicker')?.click()}
               >
-                <div className="mb-3">
-                  <label className="block text-sm font-medium text-text-dark mb-1">Select Hostel</label>
-                  <select
-                    className="input"
-                    value={selectedHostelId}
-                    onChange={(e) => setSelectedHostelId(e.target.value)}
-                  >
-                    <option value="">-- Choose a hostel --</option>
-                    {hostels.map((h) => (
-                      <option key={h._id} value={h._id}>{h.name}</option>
-                    ))}
-                  </select>
-                </div>
                 <p className="text-text-muted text-center">
                   Drag & drop photos/videos here or click to select
                 </p>

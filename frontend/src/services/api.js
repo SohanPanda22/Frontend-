@@ -72,6 +72,16 @@ export const expenseAPI = {
   create: (data) => api.post('/expenses', data),
 }
 
+// Tenant API calls
+export const tenantAPI = {
+  searchHostels: (params) => api.get('/tenant/hostels/search', { params }),
+  getHostelDetails: (id) => api.get(`/tenant/hostels/${id}`),
+  getExpenses: () => api.get('/tenant/expenses'),
+  addExpense: (data) => api.post('/tenant/expenses', data),
+  submitFeedback: (data) => api.post('/tenant/feedback', data),
+  getContracts: () => api.get('/tenant/contracts'),
+}
+
 // Owner API calls
 export const ownerAPI = {
   getMyHostels: () => api.get('/owner/hostels'),
