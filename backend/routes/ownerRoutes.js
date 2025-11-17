@@ -11,6 +11,7 @@ const {
   uploadRoomMedia,
   getMyTenants,
   getHostelTenants,
+  approveTenantContract,
   terminateTenantContract,
 } = require('../controllers/ownerController');
 const { protect } = require('../middleware/authMiddleware');
@@ -46,6 +47,7 @@ router.post('/rooms/:id/upload', upload.fields([
 // Tenant management routes
 router.get('/tenants', getMyTenants);
 router.get('/hostels/:id/tenants', getHostelTenants);
+router.post('/tenants/:contractId/approve', approveTenantContract);
 router.post('/tenants/:contractId/terminate', terminateTenantContract);
 
 module.exports = router;

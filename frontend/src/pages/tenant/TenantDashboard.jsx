@@ -40,13 +40,19 @@ export default function TenantDashboard() {
     // Check if user has any active contracts/bookings
     const checkUserBookingStatus = async () => {
       try {
-        setLoading(true)
         console.log('Checking user booking status...')
         
-        // Check if user has contracts
-        const contractsResponse = await tenantAPI.getMyContracts()
+        // Fetch both contracts and hostels in parallel
+        const [contractsResponse, hostelsResponse] = await Promise.all([
+          tenantAPI.getMyContracts(),
+          tenantAPI.searchHostels({ page: 1, limit: 100, showAll: true })
+        ])
+        
         const contracts = contractsResponse.data?.data || []
         console.log('User contracts:', contracts)
+        
+        const hostelsData = hostelsResponse.data?.data || []
+        console.log('Available hostels:', hostelsData.length)
         
         // If user has active contracts, they're in a hostel
         const hasActive = contracts.some(contract => 
@@ -58,21 +64,15 @@ export default function TenantDashboard() {
           contract.status === 'active' || contract.status === 'pending_signatures' || contract.status === 'draft'
         )
         
+        // Update all states together to prevent intermediate renders
         setMyBooking(activeContract || null)
         setHasActiveBooking(hasActive)
         setUserInHostel(hasActive || user?.currentHostel ? true : false)
+        setHostels(hostelsData)
         
-        // If no active booking, fetch available hostels
-        if (!hasActive) {
-          console.log('No active booking found. Fetching available hostels...')
-          // Pass showAll=true to get all hostels, not just verified ones
-          const hostelsResponse = await tenantAPI.searchHostels({ page: 1, limit: 100, showAll: true })
-          console.log('Available hostels:', hostelsResponse.data?.data?.length || 0)
-          setHostels(hostelsResponse.data?.data || [])
-        }
       } catch (error) {
         console.error('Error checking booking status:', error)
-        // If API fails, show hostels by default
+        // If API fails, still try to fetch hostels
         try {
           const hostelsResponse = await tenantAPI.searchHostels({ page: 1, limit: 100, showAll: true })
           setHostels(hostelsResponse.data?.data || [])
@@ -80,12 +80,27 @@ export default function TenantDashboard() {
           console.error('Error fetching hostels:', err)
           setHostels([])
         }
-      } finally {
-        setLoading(false)
+        // Reset booking states on error
+        setMyBooking(null)
+        setHasActiveBooking(false)
+        setUserInHostel(false)
       }
     }
 
-    checkUserBookingStatus()
+    const loadData = async () => {
+      setLoading(true)
+      await checkUserBookingStatus()
+      setLoading(false)
+    }
+    
+    loadData()
+    
+    // Set up auto-refresh every 30 seconds to check for contract updates
+    const refreshInterval = setInterval(() => {
+      checkUserBookingStatus()
+    }, 30000) // 30 seconds
+    
+    return () => clearInterval(refreshInterval)
   }, [])
 
   const fetchHostelRooms = async (hostelId) => {
@@ -266,16 +281,31 @@ export default function TenantDashboard() {
         }
       }
 
-      // Check if Razorpay SDK is loaded
+      // Check if Razorpay SDK is loaded, if not load it dynamically
       if (!window.Razorpay) {
-        console.error('Razorpay SDK not loaded')
-        setBookingMessage('Payment gateway not loaded. Please refresh the page and try again.')
-        setBookingLoading(false)
-        return
+        console.log('Razorpay SDK not found, loading dynamically...')
+        setBookingMessage('Loading payment gateway...')
+        
+        // Load Razorpay SDK dynamically
+        const script = document.createElement('script')
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+        script.async = true
+        script.onload = () => {
+          console.log('Razorpay SDK loaded successfully')
+          setBookingMessage('Opening payment gateway...')
+          const razorpay = new window.Razorpay(options)
+          razorpay.open()
+        }
+        script.onerror = () => {
+          console.error('Failed to load Razorpay SDK')
+          setBookingMessage('Failed to load payment gateway. Please check your internet connection and try again.')
+          setBookingLoading(false)
+        }
+        document.head.appendChild(script)
+      } else {
+        const razorpay = new window.Razorpay(options)
+        razorpay.open()
       }
-
-      const razorpay = new window.Razorpay(options)
-      razorpay.open()
     } catch (error) {
       console.error('Payment order error:', error)
       console.error('Error details:', error.response || error)
@@ -404,7 +434,12 @@ export default function TenantDashboard() {
                           <p className="text-text-muted">Loading available hostels...</p>
                         </div>
                       </div>
-                    ) : hostels.length > 0 ? (
+                    ) : !hostels || hostels.length === 0 ? (
+                      <div className="text-center py-12">
+                        <p className="text-text-muted text-lg">No hostels available at the moment.</p>
+                        <p className="text-text-muted mt-2">Please check back later or contact support.</p>
+                      </div>
+                    ) : (
                       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {hostels.map((hostel) => (
                           <div
@@ -518,11 +553,6 @@ export default function TenantDashboard() {
                           </div>
                         ))}
                       </div>
-                    ) : (
-                      <div className="text-center py-12">
-                        <p className="text-text-muted text-lg">No hostels available at the moment.</p>
-                        <p className="text-text-muted mt-2">Please check back later or contact support.</p>
-                      </div>
                     )}
                   </div>
 
@@ -560,22 +590,53 @@ export default function TenantDashboard() {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  {/* Pending Approval Banner */}
+                  {myBooking && (myBooking.status === 'pending_signatures' || myBooking.status === 'draft') && (
+                    <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-6 shadow-lg">
+                      <div className="flex items-center gap-4">
+                        <span className="text-4xl">⏳</span>
+                        <div className="flex-1">
+                          <h3 className="text-xl font-bold text-yellow-800 mb-1">Booking Pending Approval</h3>
+                          <p className="text-yellow-700 text-sm">Your booking request is waiting for the hostel owner's approval. You will be notified once approved.</p>
+                        </div>
+                        <button
+                          onClick={() => window.location.reload()}
+                          className="bg-yellow-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-yellow-600 transition"
+                        >
+                          🔄 Refresh Status
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* My Hostel Section */}
                   {myBooking && (
-                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-500 rounded-xl p-8 shadow-lg">
+                    <div className={`rounded-xl p-8 shadow-lg border-2 ${
+                      myBooking.status === 'active' 
+                        ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-500' 
+                        : 'bg-gradient-to-r from-gray-50 to-gray-100 border-gray-300'
+                    }`}>
                       <div className="flex items-start justify-between mb-6">
                         <div className="flex items-center gap-3">
                           <span className="text-5xl">🏠</span>
                           <div>
-                            <h2 className="text-3xl font-bold text-green-700 mb-1">My Hostel</h2>
-                            <p className="text-green-600 text-sm font-semibold">
-                              Status: {myBooking.status === 'active' ? '✓ Active' : myBooking.status === 'pending_signatures' ? '⏳ Pending' : '📝 Draft'}
+                            <h2 className={`text-3xl font-bold mb-1 ${
+                              myBooking.status === 'active' ? 'text-green-700' : 'text-gray-700'
+                            }`}>My Hostel</h2>
+                            <p className={`text-sm font-semibold ${
+                              myBooking.status === 'active' ? 'text-green-600' : 'text-yellow-600'
+                            }`}>
+                              Status: {myBooking.status === 'active' ? '✓ Active' : myBooking.status === 'pending_signatures' ? '⏳ Pending Approval' : '📝 Draft'}
                             </p>
                           </div>
                         </div>
-                        {myBooking.status === 'active' && (
+                        {myBooking.status === 'active' ? (
                           <div className="bg-green-500 text-white px-4 py-2 rounded-full text-sm font-bold">
                             ✓ Booked
+                          </div>
+                        ) : (
+                          <div className="bg-yellow-500 text-white px-4 py-2 rounded-full text-sm font-bold">
+                            ⏳ Pending
                           </div>
                         )}
                       </div>
@@ -731,7 +792,113 @@ export default function TenantDashboard() {
 
           {activeTab === 'hostel' && (
             <div className="space-y-6">
-              {selectedHostel ? (
+              {myBooking ? (
+                <div className="space-y-6">
+                  {/* Hostel Name Header */}
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-primary rounded-xl p-6 shadow-lg">
+                    <div className="flex items-center gap-4">
+                      <span className="text-5xl">🏢</span>
+                      <div>
+                        <h2 className="text-3xl font-bold text-primary">{myBooking.hostel?.name || 'N/A'}</h2>
+                        <p className="text-text-muted">📍 {myBooking.hostel?.address?.city}, {myBooking.hostel?.address?.state}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* My Room Card */}
+                  <div className="card">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-2xl font-bold text-text-dark flex items-center gap-2">
+                        🛏️ My Room
+                      </h3>
+                      {myBooking.status === 'active' && (
+                        <div className="bg-green-500 text-white px-4 py-2 rounded-full text-sm font-bold">
+                          ✓ Active
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-6">
+                      <div className="bg-blue-50 rounded-lg p-6 text-center">
+                        <p className="text-text-muted text-sm mb-2">Room Number</p>
+                        <p className="text-4xl font-bold text-primary">{myBooking.room?.roomNumber || 'N/A'}</p>
+                      </div>
+
+                      <div className="bg-purple-50 rounded-lg p-6 text-center">
+                        <p className="text-text-muted text-sm mb-2">Floor</p>
+                        <p className="text-4xl font-bold text-purple-600">
+                          {myBooking.room?.floor || 'N/A'}
+                          <span className="text-lg">
+                            {myBooking.room?.floor === 1 ? 'st' : myBooking.room?.floor === 2 ? 'nd' : myBooking.room?.floor === 3 ? 'rd' : 'th'}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="bg-green-50 rounded-lg p-6 text-center">
+                        <p className="text-text-muted text-sm mb-2">Room Type</p>
+                        <p className="text-2xl font-bold text-green-600 capitalize">
+                          {myBooking.room?.roomType || 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 pt-6 border-t border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-text-muted text-sm">Occupancy</p>
+                          <p className="text-xl font-bold text-text-dark">
+                            {myBooking.room?.currentOccupancy || 0} / {myBooking.room?.capacity || 0} persons
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-text-muted text-sm">Monthly Rent</p>
+                          <p className="text-3xl font-bold text-accent">₹{myBooking.rent || 'N/A'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Roommates Section */}
+                  <div className="card">
+                    <h3 className="text-2xl font-bold text-text-dark mb-6 flex items-center gap-2">
+                      👥 My Roommates
+                      <span className="text-sm font-normal text-text-muted">
+                        ({myBooking.room?.tenants?.length || 0} total)
+                      </span>
+                    </h3>
+
+                    {myBooking.room?.tenants && myBooking.room.tenants.length > 0 ? (
+                      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {myBooking.room.tenants.map((roommate, idx) => (
+                          <div key={idx} className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-5 border-2 border-blue-200 hover:border-primary transition">
+                            <div className="flex items-start gap-3">
+                              <div className="w-12 h-12 bg-primary text-white rounded-full flex items-center justify-center font-bold text-xl">
+                                {roommate.name?.charAt(0).toUpperCase() || '?'}
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-bold text-lg text-text-dark">{roommate.name || 'Unknown'}</p>
+                                <p className="text-sm text-text-muted flex items-center gap-1 mt-1">
+                                  📧 {roommate.email || 'N/A'}
+                                </p>
+                                {roommate.phone && (
+                                  <p className="text-sm text-text-muted flex items-center gap-1 mt-1">
+                                    📞 {roommate.phone}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 bg-gray-50 rounded-lg">
+                        <p className="text-5xl mb-3">👤</p>
+                        <p className="text-text-muted">You are the only occupant in this room</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : selectedHostel ? (
                 <>
                   {/* Hostel Header */}
                   <div className="card">
@@ -1032,112 +1199,6 @@ export default function TenantDashboard() {
                       <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
                       <p className="text-text-muted">Loading hostel details...</p>
                     </div>
-                  </div>
-                </div>
-              ) : myBooking ? (
-                <div className="space-y-6">
-                  {/* Hostel Name Header */}
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-primary rounded-xl p-6 shadow-lg">
-                    <div className="flex items-center gap-4">
-                      <span className="text-5xl">🏢</span>
-                      <div>
-                        <h2 className="text-3xl font-bold text-primary">{myBooking.hostel?.name || 'N/A'}</h2>
-                        <p className="text-text-muted">📍 {myBooking.hostel?.address?.city}, {myBooking.hostel?.address?.state}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* My Room Card */}
-                  <div className="card">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-2xl font-bold text-text-dark flex items-center gap-2">
-                        🛏️ My Room
-                      </h3>
-                      {myBooking.status === 'active' && (
-                        <div className="bg-green-500 text-white px-4 py-2 rounded-full text-sm font-bold">
-                          ✓ Active
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="grid md:grid-cols-3 gap-6">
-                      <div className="bg-blue-50 rounded-lg p-6 text-center">
-                        <p className="text-text-muted text-sm mb-2">Room Number</p>
-                        <p className="text-4xl font-bold text-primary">{myBooking.room?.roomNumber || 'N/A'}</p>
-                      </div>
-
-                      <div className="bg-purple-50 rounded-lg p-6 text-center">
-                        <p className="text-text-muted text-sm mb-2">Floor</p>
-                        <p className="text-4xl font-bold text-purple-600">
-                          {myBooking.room?.floor || 'N/A'}
-                          <span className="text-lg">
-                            {myBooking.room?.floor === 1 ? 'st' : myBooking.room?.floor === 2 ? 'nd' : myBooking.room?.floor === 3 ? 'rd' : 'th'}
-                          </span>
-                        </p>
-                      </div>
-
-                      <div className="bg-green-50 rounded-lg p-6 text-center">
-                        <p className="text-text-muted text-sm mb-2">Room Type</p>
-                        <p className="text-2xl font-bold text-green-600 capitalize">
-                          {myBooking.room?.roomType || 'N/A'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-6 pt-6 border-t border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-text-muted text-sm">Occupancy</p>
-                          <p className="text-xl font-bold text-text-dark">
-                            {myBooking.room?.currentOccupancy || 0} / {myBooking.room?.capacity || 0} persons
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-text-muted text-sm">Monthly Rent</p>
-                          <p className="text-3xl font-bold text-accent">₹{myBooking.rent || 'N/A'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Roommates Section */}
-                  <div className="card">
-                    <h3 className="text-2xl font-bold text-text-dark mb-6 flex items-center gap-2">
-                      👥 My Roommates
-                      <span className="text-sm font-normal text-text-muted">
-                        ({myBooking.room?.tenants?.length || 0} total)
-                      </span>
-                    </h3>
-
-                    {myBooking.room?.tenants && myBooking.room.tenants.length > 0 ? (
-                      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {myBooking.room.tenants.map((roommate, idx) => (
-                          <div key={idx} className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-5 border-2 border-blue-200 hover:border-primary transition">
-                            <div className="flex items-start gap-3">
-                              <div className="w-12 h-12 bg-primary text-white rounded-full flex items-center justify-center font-bold text-xl">
-                                {roommate.name?.charAt(0).toUpperCase() || '?'}
-                              </div>
-                              <div className="flex-1">
-                                <p className="font-bold text-lg text-text-dark">{roommate.name || 'Unknown'}</p>
-                                <p className="text-sm text-text-muted flex items-center gap-1 mt-1">
-                                  📧 {roommate.email || 'N/A'}
-                                </p>
-                                {roommate.phone && (
-                                  <p className="text-sm text-text-muted flex items-center gap-1 mt-1">
-                                    📞 {roommate.phone}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 bg-gray-50 rounded-lg">
-                        <p className="text-5xl mb-3">👤</p>
-                        <p className="text-text-muted">You are the only occupant in this room</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               ) : (

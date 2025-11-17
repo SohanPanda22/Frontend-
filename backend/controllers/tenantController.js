@@ -303,17 +303,16 @@ const bookRoom = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Hostel not found' });
     }
 
-    // Check if tenant already has an active booking for this room
+    // Check if tenant already has ANY active or pending booking (prevent multiple bookings)
     const existingContract = await Contract.findOne({
       tenant: req.user.id,
-      room: roomId,
       status: { $in: ['pending_signatures', 'active', 'draft'] }
     });
 
     if (existingContract) {
       return res.status(400).json({ 
         success: false, 
-        message: 'You already have an active booking for this room' 
+        message: 'You already have an active or pending booking. Please wait for approval or cancel your existing booking first.' 
       });
     }
 
@@ -345,15 +344,9 @@ const bookRoom = async (req, res) => {
       ],
     });
 
-    // Update room availability
-    room.isAvailable = false;
-    room.currentOccupancy += 1;
-    room.tenants.push(req.user.id);
-    await room.save();
-
-    // Update hostel available rooms
-    hostel.availableRooms = Math.max(0, (hostel.availableRooms || 0) - 1);
-    await hostel.save();
+    // DON'T update room or hostel immediately - only update when owner approves the contract
+    // Room occupancy, tenant list, and availability will be updated in approveTenantContract
+    // This prevents rooms from being marked unavailable for pending bookings that may be rejected
 
     // Store payment details in contract
     contract.paymentId = razorpay_payment_id;

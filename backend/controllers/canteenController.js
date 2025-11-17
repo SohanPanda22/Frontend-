@@ -3,6 +3,7 @@ const MenuItem = require('../models/MenuItem');
 const Order = require('../models/Order');
 const razorpay = require('../config/razorypay');
 const crypto = require('crypto');
+const cloudinary = require('../config/cloudinary');
 
 // @desc    Create canteen
 // @route   POST /api/canteen
@@ -37,10 +38,23 @@ const getMyCanteens = async (req, res) => {
   }
 };
 
-// @desc    Add menu item
-// @route   POST /api/canteen/:id/menu
+// @desc    Get available hostels for canteen
+// @route   GET /api/canteen/available-hostels
 // @access  Private/CanteenProvider
-const addMenuItem = async (req, res) => {
+const getAvailableHostels = async (req, res) => {
+  try {
+    const Hostel = require('../models/Hostel');
+    const hostels = await Hostel.find({ isActive: true }).select('name address city');
+    res.json({ success: true, data: hostels });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Delete canteen
+// @route   DELETE /api/canteen/:id
+// @access  Private/CanteenProvider
+const deleteCanteen = async (req, res) => {
   try {
     const canteen = await Canteen.findById(req.params.id);
 
@@ -52,13 +66,69 @@ const addMenuItem = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
+    // Delete all menu items associated with this canteen
+    await MenuItem.deleteMany({ canteen: canteen._id });
+
+    // Delete the canteen
+    await Canteen.findByIdAndDelete(req.params.id);
+
+    // Remove canteen from user's canteens array
+    req.user.canteens = req.user.canteens.filter(c => c.toString() !== req.params.id);
+    await req.user.save();
+
+    res.json({ success: true, message: 'Canteen deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Add menu item
+// @route   POST /api/canteen/:id/menu
+// @access  Private/CanteenProvider
+const addMenuItem = async (req, res) => {
+  try {
+    console.log('Adding menu item - File received:', req.file ? 'YES' : 'NO');
+    console.log('Request body:', req.body);
+    
+    const canteen = await Canteen.findById(req.params.id);
+
+    if (!canteen) {
+      return res.status(404).json({ success: false, message: 'Canteen not found' });
+    }
+
+    if (canteen.provider.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    // Handle image upload if provided
+    let imageData = {};
+    if (req.file) {
+      console.log('Uploading image to Cloudinary...');
+      const b64 = Buffer.from(req.file.buffer).toString('base64');
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'safestay/menu-items',
+        resource_type: 'image',
+      });
+      console.log('Image uploaded successfully:', result.secure_url);
+      imageData = {
+        image: {
+          url: result.secure_url,
+          publicId: result.public_id,
+        },
+      };
+    }
+
     const menuItem = await MenuItem.create({
       ...req.body,
+      ...imageData,
       canteen: canteen._id,
     });
 
+    console.log('Menu item created:', menuItem);
     res.status(201).json({ success: true, data: menuItem });
   } catch (error) {
+    console.error('Error adding menu item:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -97,12 +167,67 @@ const updateMenuItem = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
+    // Handle image upload if provided
+    if (req.file) {
+      // Delete old image if exists
+      if (menuItem.image?.publicId) {
+        try {
+          await cloudinary.uploader.destroy(menuItem.image.publicId);
+        } catch (err) {
+          console.log('Error deleting old image:', err);
+        }
+      }
+
+      const b64 = Buffer.from(req.file.buffer).toString('base64');
+      const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+      const result = await cloudinary.uploader.upload(dataURI, {
+        folder: 'safestay/menu-items',
+        resource_type: 'image',
+      });
+      req.body.image = {
+        url: result.secure_url,
+        publicId: result.public_id,
+      };
+    }
+
     const updatedItem = await MenuItem.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
     });
 
     res.json({ success: true, data: updatedItem });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Delete menu item
+// @route   DELETE /api/canteen/menu/:id
+// @access  Private/CanteenProvider
+const deleteMenuItem = async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findById(req.params.id).populate('canteen');
+
+    if (!menuItem) {
+      return res.status(404).json({ success: false, message: 'Menu item not found' });
+    }
+
+    if (menuItem.canteen.provider.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    // Delete image from cloudinary if exists
+    if (menuItem.image?.publicId) {
+      try {
+        await cloudinary.uploader.destroy(menuItem.image.publicId);
+      } catch (err) {
+        console.log('Error deleting image:', err);
+      }
+    }
+
+    await MenuItem.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: 'Menu item deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -323,15 +448,221 @@ const getMyOrders = async (req, res) => {
   }
 };
 
+// @desc    Update canteen subscription plans
+// @route   PUT /api/canteen/:id/subscription-plans
+// @access  Private/CanteenProvider
+const updateSubscriptionPlans = async (req, res) => {
+  try {
+    const canteen = await Canteen.findById(req.params.id);
+
+    if (!canteen) {
+      return res.status(404).json({ success: false, message: 'Canteen not found' });
+    }
+
+    if (canteen.provider.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    canteen.subscriptionPlans = req.body.subscriptionPlans;
+    await canteen.save();
+
+    res.json({ success: true, data: canteen });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Create subscription order
+// @route   POST /api/canteen/subscriptions/create-order
+// @access  Private/Tenant
+const createSubscriptionOrder = async (req, res) => {
+  try {
+    const { canteenId, plan, duration } = req.body; // duration in months
+    const Subscription = require('../models/Subscription');
+
+    const canteen = await Canteen.findById(canteenId);
+    if (!canteen) {
+      return res.status(404).json({ success: false, message: 'Canteen not found' });
+    }
+
+    if (!canteen.subscriptionPlans[plan]?.enabled) {
+      return res.status(400).json({ success: false, message: 'This subscription plan is not available' });
+    }
+
+    const monthlyPrice = canteen.subscriptionPlans[plan].price;
+    const totalAmount = monthlyPrice * duration;
+
+    // Create Razorpay order
+    const order = await razorpay.orders.create({
+      amount: totalAmount * 100,
+      currency: 'INR',
+      receipt: `sub_${Date.now()}`,
+    });
+
+    // Calculate dates
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + duration);
+
+    // Create subscription
+    const subscription = await Subscription.create({
+      tenant: req.user.id,
+      canteen: canteenId,
+      plan,
+      price: totalAmount,
+      startDate,
+      endDate,
+      razorpayOrderId: order.id,
+      status: 'active',
+      paymentStatus: 'pending',
+    });
+
+    res.json({
+      success: true,
+      data: {
+        subscription,
+        orderId: order.id,
+        amount: totalAmount,
+      },
+    });
+  } catch (error) {
+    console.error('Error creating subscription order:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Verify subscription payment
+// @route   POST /api/canteen/subscriptions/verify-payment
+// @access  Private/Tenant
+const verifySubscriptionPayment = async (req, res) => {
+  try {
+    const { subscriptionId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+    const Subscription = require('../models/Subscription');
+
+    const hmac = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
+    hmac.update(`${razorpayOrderId}|${razorpayPaymentId}`);
+    const generatedSignature = hmac.digest('hex');
+
+    if (generatedSignature !== razorpaySignature) {
+      return res.status(400).json({ success: false, message: 'Payment verification failed' });
+    }
+
+    const subscription = await Subscription.findById(subscriptionId);
+    if (!subscription) {
+      return res.status(404).json({ success: false, message: 'Subscription not found' });
+    }
+
+    subscription.razorpayPaymentId = razorpayPaymentId;
+    subscription.razorpaySignature = razorpaySignature;
+    subscription.paymentStatus = 'paid';
+    await subscription.save();
+
+    // Update canteen subscriber count
+    await Canteen.findByIdAndUpdate(subscription.canteen, {
+      $inc: { subscriberCount: 1 },
+    });
+
+    res.json({ success: true, data: subscription });
+  } catch (error) {
+    console.error('Error verifying subscription payment:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get tenant subscriptions
+// @route   GET /api/canteen/subscriptions/my-subscriptions
+// @access  Private/Tenant
+const getMySubscriptions = async (req, res) => {
+  try {
+    const Subscription = require('../models/Subscription');
+    const subscriptions = await Subscription.find({ tenant: req.user.id })
+      .populate('canteen', 'name hostel')
+      .populate({
+        path: 'canteen',
+        populate: { path: 'hostel', select: 'name' }
+      })
+      .sort({ createdAt: -1 });
+
+    res.json({ success: true, data: subscriptions });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get canteen subscriptions (for provider)
+// @route   GET /api/canteen/:id/subscriptions
+// @access  Private/CanteenProvider
+const getCanteenSubscriptions = async (req, res) => {
+  try {
+    const Subscription = require('../models/Subscription');
+    const canteen = await Canteen.findById(req.params.id);
+
+    if (!canteen) {
+      return res.status(404).json({ success: false, message: 'Canteen not found' });
+    }
+
+    if (canteen.provider.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    const subscriptions = await Subscription.find({ canteen: req.params.id })
+      .populate('tenant', 'name phone email')
+      .sort({ createdAt: -1 });
+
+    res.json({ success: true, data: subscriptions });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Cancel subscription
+// @route   PUT /api/canteen/subscriptions/:id/cancel
+// @access  Private/Tenant
+const cancelSubscription = async (req, res) => {
+  try {
+    const Subscription = require('../models/Subscription');
+    const subscription = await Subscription.findById(req.params.id);
+
+    if (!subscription) {
+      return res.status(404).json({ success: false, message: 'Subscription not found' });
+    }
+
+    if (subscription.tenant.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    subscription.status = 'cancelled';
+    await subscription.save();
+
+    // Update canteen subscriber count
+    await Canteen.findByIdAndUpdate(subscription.canteen, {
+      $inc: { subscriberCount: -1 },
+    });
+
+    res.json({ success: true, data: subscription });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   createCanteen,
   getMyCanteens,
+  getAvailableHostels,
+  deleteCanteen,
   addMenuItem,
   getCanteenMenu,
   updateMenuItem,
+  deleteMenuItem,
   createOrder,
   verifyPayment,
   getProviderOrders,
   updateOrderStatus,
   getMyOrders,
+  updateSubscriptionPlans,
+  createSubscriptionOrder,
+  verifySubscriptionPayment,
+  getMySubscriptions,
+  getCanteenSubscriptions,
+  cancelSubscription,
 };

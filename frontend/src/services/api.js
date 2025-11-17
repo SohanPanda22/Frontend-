@@ -58,6 +58,25 @@ export const canteenAPI = {
   createOrder: (data) => api.post('/canteen/orders', data),
   getOrders: () => api.get('/canteen/orders'),
   verifyPayment: (data) => api.post('/canteen/orders/verify-payment', data),
+  getMyCanteens: () => api.get('/canteen/my-canteens'),
+  getAvailableHostels: () => api.get('/canteen/available-hostels'),
+  createCanteen: (data) => api.post('/canteen', data),
+  deleteCanteen: (canteenId) => api.delete(`/canteen/${canteenId}`),
+  getCanteenMenu: (canteenId) => api.get(`/canteen/${canteenId}/menu`),
+  addMenuItem: (canteenId, data) => api.post(`/canteen/${canteenId}/menu`, data, {
+    headers: data instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : {}
+  }),
+  updateMenuItem: (itemId, data) => api.put(`/canteen/menu/${itemId}`, data, {
+    headers: data instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : {}
+  }),
+  deleteMenuItem: (itemId) => api.delete(`/canteen/menu/${itemId}`),
+  // Subscription APIs
+  updateSubscriptionPlans: (canteenId, data) => api.put(`/canteen/${canteenId}/subscription-plans`, data),
+  getCanteenSubscriptions: (canteenId) => api.get(`/canteen/${canteenId}/subscriptions`),
+  createSubscriptionOrder: (data) => api.post('/canteen/subscriptions/create-order', data),
+  verifySubscriptionPayment: (data) => api.post('/canteen/subscriptions/verify-payment', data),
+  getMySubscriptions: () => api.get('/canteen/subscriptions/my-subscriptions'),
+  cancelSubscription: (subscriptionId) => api.put(`/canteen/subscriptions/${subscriptionId}/cancel`),
 }
 
 // Contract API calls
@@ -119,6 +138,7 @@ export const ownerAPI = {
   // Tenant management
   getMyTenants: () => api.get('/owner/tenants'),
   getHostelTenants: (hostelId) => api.get(`/owner/hostels/${hostelId}/tenants`),
+  approveTenantContract: (contractId) => api.post(`/owner/tenants/${contractId}/approve`),
   terminateTenantContract: (contractId) => api.post(`/owner/tenants/${contractId}/terminate`),
 }
 

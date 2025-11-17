@@ -54,6 +54,36 @@ const canteenSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  subscriptionPlans: {
+    breakfast: {
+      enabled: { type: Boolean, default: false },
+      price: { type: Number, default: 0 },
+    },
+    lunch: {
+      enabled: { type: Boolean, default: false },
+      price: { type: Number, default: 0 },
+    },
+    dinner: {
+      enabled: { type: Boolean, default: false },
+      price: { type: Number, default: 0 },
+    },
+    breakfast_lunch: {
+      enabled: { type: Boolean, default: false },
+      price: { type: Number, default: 0 },
+    },
+    lunch_dinner: {
+      enabled: { type: Boolean, default: false },
+      price: { type: Number, default: 0 },
+    },
+    all_meals: {
+      enabled: { type: Boolean, default: false },
+      price: { type: Number, default: 0 },
+    },
+  },
+  subscriberCount: {
+    type: Number,
+    default: 0,
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Canteen', canteenSchema);

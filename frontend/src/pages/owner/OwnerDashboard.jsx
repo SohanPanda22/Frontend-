@@ -185,6 +185,20 @@ export default function OwnerDashboard() {
     }
   }
 
+  const handleApproveTenant = async (contractId) => {
+    if (!confirm('Are you sure you want to approve this booking? The tenant will be notified.')) {
+      return
+    }
+    
+    try {
+      await ownerAPI.approveTenantContract(contractId)
+      alert('Booking approved successfully!')
+      await fetchTenants() // Refresh tenant list
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to approve booking')
+    }
+  }
+
   const handleTerminateTenant = async (contractId) => {
     if (!confirm('Are you sure you want to terminate this tenant contract? This will make the room available again.')) {
       return
@@ -193,8 +207,14 @@ export default function OwnerDashboard() {
     try {
       await ownerAPI.terminateTenantContract(contractId)
       alert('Contract terminated successfully')
-      fetchTenants() // Refresh tenant list
-      fetchAllRooms(hostels) // Refresh rooms
+      
+      // Refresh data without affecting hostels list
+      await fetchTenants()
+      
+      // Refresh rooms for all hostels
+      if (hostels && hostels.length > 0) {
+        await fetchAllRooms(hostels)
+      }
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to terminate contract')
     }
@@ -992,12 +1012,22 @@ export default function OwnerDashboard() {
                               </p>
                             </td>
                             <td className="px-4 py-3">
-                              <button
-                                onClick={() => handleTerminateTenant(contract._id)}
-                                className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-600 transition"
-                              >
-                                Terminate
-                              </button>
+                              <div className="flex gap-2">
+                                {(contract.status === 'pending_signatures' || contract.status === 'draft') && (
+                                  <button
+                                    onClick={() => handleApproveTenant(contract._id)}
+                                    className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-600 transition"
+                                  >
+                                    Accept
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleTerminateTenant(contract._id)}
+                                  className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-600 transition"
+                                >
+                                  Terminate
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}

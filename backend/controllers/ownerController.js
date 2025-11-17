@@ -469,6 +469,63 @@ const getHostelTenants = async (req, res) => {
   }
 };
 
+// @desc    Accept/Approve tenant booking (change status to active)
+// @route   POST /api/owner/tenants/:contractId/approve
+// @access  Private/Owner
+const approveTenantContract = async (req, res) => {
+  try {
+    const Contract = require('../models/Contract');
+    
+    const contract = await Contract.findById(req.params.contractId)
+      .populate('hostel', 'owner')
+      .populate('room')
+      .populate('tenant', 'name email');
+
+    if (!contract) {
+      return res.status(404).json({ success: false, message: 'Contract not found' });
+    }
+
+    if (contract.hostel.owner.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    if (contract.status === 'active') {
+      return res.status(400).json({ success: false, message: 'Contract is already active' });
+    }
+
+    // Update contract status to active
+    contract.status = 'active';
+    
+    // Add tenant to room's tenant list
+    const room = contract.room;
+    if (!room.tenants.includes(contract.tenant._id)) {
+      room.tenants.push(contract.tenant._id);
+    }
+    
+    // Update room occupancy and availability
+    room.currentOccupancy = room.tenants.length;
+    
+    if (room.currentOccupancy >= room.capacity) {
+      room.isAvailable = false;
+    }
+    
+    await room.save();
+    
+    // Update hostel available rooms count
+    const hostel = await Hostel.findById(contract.hostel._id);
+    if (hostel) {
+      hostel.availableRooms = Math.max(0, (hostel.availableRooms || 0) - 1);
+      await hostel.save();
+    }
+    
+    await contract.save();
+
+    res.json({ success: true, message: 'Booking approved successfully', data: contract });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Remove tenant from room (terminate contract)
 // @route   POST /api/owner/tenants/:contractId/terminate
 // @access  Private/Owner
@@ -495,16 +552,26 @@ const terminateTenantContract = async (req, res) => {
 
     // Update room availability
     const room = contract.room;
-    if (room.currentOccupancy > 0) {
-      room.currentOccupancy -= 1;
-    }
+    
+    // Remove tenant from room's tenants array
+    room.tenants = room.tenants.filter(t => t.toString() !== contract.tenant.toString());
+    
+    // Update occupancy based on actual tenant count
+    room.currentOccupancy = room.tenants.length;
+    
+    // Make room available if under capacity
     if (room.currentOccupancy < room.capacity) {
       room.isAvailable = true;
     }
     
-    // Remove tenant from room's tenants array
-    room.tenants = room.tenants.filter(t => t.toString() !== contract.tenant.toString());
     await room.save();
+
+    // Update hostel available rooms count
+    const hostel = await Hostel.findById(contract.hostel._id);
+    if (hostel) {
+      hostel.availableRooms = Math.min(hostel.totalRooms || 100, (hostel.availableRooms || 0) + 1);
+      await hostel.save();
+    }
 
     res.json({ success: true, message: 'Contract terminated successfully', data: contract });
   } catch (error) {
@@ -526,5 +593,6 @@ module.exports = {
   uploadRoomMedia,
   getMyTenants,
   getHostelTenants,
+  approveTenantContract,
   terminateTenantContract,
 };
