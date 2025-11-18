@@ -20,9 +20,7 @@ const {
   getMySubscriptions,
   getCanteenSubscriptions,
   cancelSubscription,
-  submitFeedback,
-  getCanteenFeedbacks,
-  getProviderFeedbacks,
+  getAvailableCanteens,
 } = require('../controllers/canteenController');
 const { protect } = require('../middleware/authMiddleware');
 const { authorize } = require('../middleware/roleMiddleware');
@@ -52,14 +50,17 @@ router.post('/feedback', protect, authorize('tenant'), submitFeedback);
 // Provider canteen management routes
 router.post('/', protect, authorize('canteen_provider'), createCanteen);
 router.get('/my-canteens', protect, authorize('canteen_provider'), getMyCanteens);
-router.get('/available-hostels', protect, authorize('canteen_provider'), getAvailableHostels);
-router.delete('/:id', protect, authorize('canteen_provider'), deleteCanteen);
+router.get('/available-hostels', protect, authorize('canteen_provider', 'owner'), getAvailableHostels);
 router.put('/:id/subscription-plans', protect, authorize('canteen_provider'), updateSubscriptionPlans);
 router.post('/:id/menu', protect, authorize('canteen_provider'), upload.single('image'), addMenuItem);
 router.put('/menu/:id', protect, authorize('canteen_provider'), upload.single('image'), updateMenuItem);
 router.delete('/menu/:id', protect, authorize('canteen_provider'), deleteMenuItem);
+router.delete('/:id', protect, authorize('canteen_provider'), deleteCanteen);
+router.get('/orders', protect, authorize('canteen_provider'), getProviderOrders);
+router.put('/orders/:id/status', protect, authorize('canteen_provider'), updateOrderStatus);
 
-// Public/Tenant routes (must come last as catch-all)
+// Public/Tenant routes
+router.get('/available', protect, authorize('tenant'), getAvailableCanteens);
 router.get('/:id/menu', getCanteenMenu);
 
 module.exports = router;

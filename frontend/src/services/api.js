@@ -11,7 +11,22 @@ const api = axios.create({
   },
 })
 
-console.log('✓ Axios baseURL:', `${API_BASE_URL}/api`)
+// Flag to prevent infinite refresh loops
+let isRefreshing = false
+let failedQueue = []
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error)
+    } else {
+      prom.resolve(token)
+    }
+  })
+  
+  isRefreshing = false
+  failedQueue = []
+}
 
 // Add token to requests
 api.interceptors.request.use(
@@ -26,23 +41,59 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 )
 
-// Handle responses
+// Handle responses with token refresh logic
 api.interceptors.response.use(
-  (response) => {
-    console.log('✓ Response:', response.status, response.config.url)
-    return response
-  },
-  (error) => {
-    console.error('❌ API Error:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      message: error.message,
-      data: error.response?.data
-    })
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      window.location.href = '/login'
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject })
+        })
+          .then(token => {
+            originalRequest.headers.Authorization = `Bearer ${token}`
+            return api(originalRequest)
+          })
+          .catch(err => Promise.reject(err))
+      }
+
+      originalRequest._retry = true
+      isRefreshing = true
+
+      const refreshToken = localStorage.getItem('refreshToken')
+
+      if (!refreshToken) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('refreshToken')
+        window.location.href = '/login'
+        return Promise.reject(error)
+      }
+
+      try {
+        const response = await axios.post(
+          `${API_BASE_URL}/api/auth/refresh-token`,
+          { refreshToken }
+        )
+
+        const { token } = response.data.data
+        localStorage.setItem('token', token)
+
+        api.defaults.headers.common.Authorization = `Bearer ${token}`
+        originalRequest.headers.Authorization = `Bearer ${token}`
+
+        processQueue(null, token)
+        return api(originalRequest)
+      } catch (refreshError) {
+        processQueue(refreshError, null)
+        localStorage.removeItem('token')
+        localStorage.removeItem('refreshToken')
+        window.location.href = '/login'
+        return Promise.reject(refreshError)
+      }
     }
+
     return Promise.reject(error)
   }
 )
@@ -52,7 +103,14 @@ export const authAPI = {
   register: (data) => api.post('/auth/register', data),
   verifyOTP: (data) => api.post('/auth/verify-otp', data),
   resendOTP: (data) => api.post('/auth/resend-otp', data),
-  login: (data) => api.post('/auth/login', data),
+  login: async (data) => {
+    const response = await api.post('/auth/login', data)
+    // Save refresh token if provided
+    if (response.data?.data?.refreshToken) {
+      localStorage.setItem('refreshToken', response.data.data.refreshToken)
+    }
+    return response
+  },
   getProfile: () => api.get('/auth/profile'),
   updateProfile: (data) => api.put('/auth/profile', data),
 }
@@ -73,6 +131,7 @@ export const canteenAPI = {
   getOrders: () => api.get('/canteen/my-orders'),
   verifyPayment: (data) => api.post('/canteen/orders/verify-payment', data),
   getMyCanteens: () => api.get('/canteen/my-canteens'),
+  getAvailableCanteens: () => api.get('/canteen/available'), // For tenants
   getAvailableHostels: () => api.get('/canteen/available-hostels'),
   createCanteen: (data) => api.post('/canteen', data),
   deleteCanteen: (canteenId) => api.delete(`/canteen/${canteenId}`),

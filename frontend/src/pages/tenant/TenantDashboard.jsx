@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { LogOut, Menu, X } from 'lucide-react'
 import { tenantAPI, canteenAPI } from '../../services/api'
-import { handleExpensePayment } from '../../utils/razorpayHandler'
 
 export default function TenantDashboard() {
   const navigate = useNavigate()
@@ -36,6 +35,25 @@ export default function TenantDashboard() {
   const [bookingLoading, setBookingLoading] = useState(false)
   const [bookingMessage, setBookingMessage] = useState('')
   const [myBooking, setMyBooking] = useState(null)
+  
+  // Canteen state
+  const [availableCanteens, setAvailableCanteens] = useState([])
+  const [selectedCanteen, setSelectedCanteen] = useState(null)
+  const [canteenMenu, setCanteenMenu] = useState([])
+  const [mySubscriptions, setMySubscriptions] = useState([])
+  const [menuCategory, setMenuCategory] = useState('all')
+  const [canteensLoading, setCanteensLoading] = useState(false)
+  const [canteenError, setCanteenError] = useState(null)
+  
+  // Subscription purchase state
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false)
+  const [selectedPlan, setSelectedPlan] = useState(null)
+  const [selectedFoodType, setSelectedFoodType] = useState('pure_veg')
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false)
+  
+  // Contracts state
+  const [myContracts, setMyContracts] = useState([])
+  const [contractsLoading, setContractsLoading] = useState(false)
 
   // Canteen subscription state
   const [canteens, setCanteens] = useState([])
@@ -178,6 +196,16 @@ export default function TenantDashboard() {
     
     return () => clearInterval(refreshInterval)
   }, [])
+
+  // Load data when switching tabs
+  useEffect(() => {
+    if (activeTab === 'canteen') {
+      fetchAvailableCanteens()
+      fetchMySubscriptions()
+    } else if (activeTab === 'contracts') {
+      fetchMyContracts()
+    }
+  }, [activeTab])
 
   const fetchHostelRooms = async (hostelId) => {
     try {
@@ -759,6 +787,197 @@ export default function TenantDashboard() {
   const handleLogout = () => {
     logout()
     navigate('/login')
+  }
+
+  const fetchAvailableCanteens = async () => {
+    setCanteensLoading(true)
+    setCanteenError(null)
+    try {
+      console.log('Fetching available canteens...')
+      const response = await canteenAPI.getAvailableCanteens()
+      console.log('Canteens response:', response.data)
+      setAvailableCanteens(response.data?.data || [])
+      
+      if (!response.data?.data || response.data.data.length === 0) {
+        const msg = response.data?.message || 'No canteens found. Make sure you have an active room booking.'
+        setCanteenError(msg)
+      }
+    } catch (error) {
+      console.error('Error fetching canteens:', error)
+      const errorMsg = error.response?.data?.message || error.message || 'Failed to load canteens'
+      setCanteenError(errorMsg)
+    } finally {
+      setCanteensLoading(false)
+    }
+  }
+
+  const fetchCanteenMenu = async (canteenId) => {
+    try {
+      const response = await canteenAPI.getCanteenMenu(canteenId)
+      setCanteenMenu(response.data?.data || [])
+    } catch (error) {
+      console.error('Error fetching menu:', error)
+    }
+  }
+
+  const fetchMySubscriptions = async () => {
+    try {
+      const response = await canteenAPI.getMySubscriptions()
+      setMySubscriptions(response.data?.data || [])
+    } catch (error) {
+      console.error('Error fetching subscriptions:', error)
+    }
+  }
+
+  const fetchMyContracts = async () => {
+    setContractsLoading(true)
+    try {
+      const response = await tenantAPI.getMyContracts()
+      setMyContracts(response.data?.data || [])
+    } catch (error) {
+      console.error('Error fetching contracts:', error)
+    } finally {
+      setContractsLoading(false)
+    }
+  }
+
+  const handleSubscribeClick = (planKey, plan) => {
+    setSelectedPlan({ key: planKey, data: plan })
+    setShowSubscriptionModal(true)
+  }
+
+  const handleSubscriptionPurchase = async () => {
+    if (!selectedCanteen || !selectedPlan || !selectedFoodType) {
+      alert('Please select all options')
+      return
+    }
+
+    const plan = selectedPlan.data
+    const price = plan[selectedFoodType]
+
+    if (!price || price <= 0) {
+      alert('This food type is not available for this plan')
+      return
+    }
+
+    try {
+      setSubscriptionLoading(true)
+
+      // Create subscription order
+      const orderResponse = await canteenAPI.createSubscriptionOrder({
+        canteen: selectedCanteen._id,
+        mealPlan: selectedPlan.key,
+        foodType: selectedFoodType,
+        amount: price,
+      })
+
+      const { razorpayOrderId, subscriptionOrderId } = orderResponse.data?.data
+
+      if (!razorpayOrderId || !subscriptionOrderId) {
+        throw new Error('Failed to create order - missing order IDs')
+      }
+
+      // Fetch Razorpay key from backend
+      const configResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/payment-config`)
+      const configData = await configResponse.json()
+      const razorpayKeyId = configData.data?.razorpayKeyId
+
+      if (!razorpayKeyId) {
+        throw new Error('Payment configuration not available')
+      }
+      
+      // Check if Razorpay is available
+      if (!window.Razorpay) {
+        // Load Razorpay script dynamically
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script')
+          script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+          script.onload = resolve
+          script.onerror = reject
+          document.body.appendChild(script)
+        })
+      }
+
+      if (!window.Razorpay) {
+        throw new Error('Failed to load Razorpay. Please check your internet connection.')
+      }
+
+      // Initialize Razorpay payment
+      const options = {
+        key: razorpayKeyId,
+        amount: price * 100, // Amount in paise
+        currency: 'INR',
+        name: 'SafeStay',
+        description: `${selectedPlan.key.replace('_', ' ')} - ${selectedFoodType.replace('_', ' ')} (${selectedCanteen.name})`,
+        order_id: razorpayOrderId,
+        prefill: {
+          name: user?.name || '',
+          email: user?.email || '',
+          contact: user?.phone || '',
+        },
+        theme: {
+          color: '#2563eb',
+        },
+        handler: async (response) => {
+          try {
+            console.log('Payment successful:', response)
+            
+            // Verify payment with backend
+            const verifyResponse = await canteenAPI.verifySubscriptionPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              subscriptionOrderId: subscriptionOrderId,
+            })
+
+            if (verifyResponse.data?.success) {
+              setSubscriptionLoading(false)
+              alert('✓ Subscription activated successfully! You will receive meals starting tomorrow.')
+              setShowSubscriptionModal(false)
+              setSelectedPlan(null)
+              setSelectedFoodType('pure_veg')
+              await fetchMySubscriptions()
+            } else {
+              throw new Error(verifyResponse.data?.message || 'Payment verification failed')
+            }
+          } catch (error) {
+            console.error('Payment verification error:', error)
+            setSubscriptionLoading(false)
+            const errorMsg = error.response?.data?.message || error.message || 'Unknown error'
+            alert('❌ Payment verification failed:\n\n' + errorMsg + '\n\nPlease contact support if the issue persists.')
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            console.log('Payment modal closed')
+            setSubscriptionLoading(false)
+          }
+        },
+        onerror: (error) => {
+          console.error('Razorpay error:', error)
+          setSubscriptionLoading(false)
+          alert('Payment failed: ' + (error.description || 'Unknown error occurred'))
+        }
+      }
+
+      try {
+        const rzp = new window.Razorpay(options)
+        rzp.on('payment.failed', (response) => {
+          console.error('Payment failed:', response)
+          setSubscriptionLoading(false)
+          alert('Payment failed: ' + response.error.description)
+        })
+        rzp.open()
+      } catch (error) {
+        console.error('Error opening Razorpay:', error)
+        setSubscriptionLoading(false)
+        alert('Error opening payment gateway: ' + error.message)
+      }
+    } catch (error) {
+      console.error('Error in subscription purchase:', error)
+      setSubscriptionLoading(false)
+      alert('Failed to process subscription: ' + (error.response?.data?.message || error.message))
+    }
   }
 
   const menuItems = [
@@ -1691,191 +1910,532 @@ export default function TenantDashboard() {
 
           {activeTab === 'canteen' && (
             <div className="space-y-6">
-              {/* Subscribe Button */}
-              <div className="card">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-2xl font-bold text-text-dark">🍽️ Canteen Subscriptions</h3>
-                  <button
-                    onClick={() => setShowSubscriptionModal(true)}
-                    className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-2 rounded-lg font-semibold hover:from-orange-600 hover:to-orange-700 transition"
-                  >
-                    + Subscribe to Meal Plan
-                  </button>
-                </div>
-
-                {/* My Subscriptions */}
-                <div>
-                  <h4 className="font-bold text-lg mb-4 text-text-dark">My Active Subscriptions</h4>
-                  {mySubscriptions && mySubscriptions.length > 0 ? (
-                    <div className="grid md:grid-cols-2 gap-4">
-                      {mySubscriptions.map(sub => (
-                        <div key={sub._id} className="border border-gray-200 rounded-lg p-4 hover:border-primary transition">
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <h5 className="font-bold text-text-dark">{sub.canteen?.name}</h5>
-                              <p className="text-sm text-text-muted">{sub.canteen?.hostel?.name}</p>
-                            </div>
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                              sub.status === 'active' ? 'bg-green-100 text-green-700' :
-                              sub.status === 'paused' ? 'bg-yellow-100 text-yellow-700' :
-                              sub.status === 'cancelled' ? 'bg-red-100 text-red-700' :
-                              'bg-gray-100 text-gray-700'
-                            }`}>
-                              {sub.status}
-                            </span>
-                          </div>
-                          
-                          <div className="space-y-2 text-sm mb-3">
-                            <div className="flex justify-between">
-                              <span className="text-text-muted">Plan:</span>
-                              <span className="font-semibold capitalize">{sub.plan.replace(/_/g, ' ')}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-text-muted">Price:</span>
-                              <span className="font-bold text-primary">₹{sub.price}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-text-muted">Duration:</span>
-                              <span className="font-semibold">
-                                {new Date(sub.startDate).toLocaleDateString()} to {new Date(sub.endDate).toLocaleDateString()}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-text-muted">Payment:</span>
-                              <span className={`font-semibold ${
-                                sub.paymentStatus === 'paid' ? 'text-green-600' :
-                                sub.paymentStatus === 'pending' ? 'text-yellow-600' :
-                                'text-red-600'
-                              }`}>
-                                {sub.paymentStatus}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-text-muted">
-                      <p className="mb-3">No active subscriptions yet</p>
-                      <button
-                        onClick={() => setShowSubscriptionModal(true)}
-                        className="btn-primary text-sm"
-                      >
-                        Subscribe to a Meal Plan
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Available Canteens */}
-              <div className="card">
-                <h4 className="font-bold text-lg mb-4 text-text-dark">Available Canteens</h4>
-                {canteens && canteens.length > 0 ? (
-                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {canteens.map(hostel => (
-                      <div key={hostel._id} className="border border-gray-200 rounded-lg p-4 hover:border-primary transition">
-                        <h5 className="font-bold text-text-dark mb-2">{hostel.canteen?.name}</h5>
-                        <p className="text-sm text-text-muted mb-3">{hostel.name}</p>
-                        <button
-                          onClick={() => {
-                            setSelectedCanteen(hostel)
-                            setShowSubscriptionModal(true)
-                          }}
-                          className="w-full bg-primary text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition text-sm mb-2"
-                        >
-                          View Plans
-                        </button>
-                        <button
-                          onClick={async () => {
-                            setSelectedCanteenForOrder(hostel)
-                            fetchCanteenMenu(hostel.canteen._id)
-                            setCategoryFilter('all')
-                            setFoodTypeFilter('all')
-                            await initializeDeliveryAddress()
-                            // Small delay to ensure state is rendered
-                            await new Promise(resolve => setTimeout(resolve, 100))
-                            setShowCustomOrderModal(true)
-                          }}
-                          className="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition text-sm"
-                        >
-                          📋 Place Custom Order
-                        </button>
+              {/* Booking Status Info */}
+              {myBooking && (
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">🏠</span>
+                    <div className="flex-1">
+                      <div className="font-bold text-text-dark">Your Current Hostel: {myBooking.hostel?.name || 'Loading...'}</div>
+                      <div className="text-sm text-text-muted">
+                        Room {myBooking.room?.roomNumber} • Status: 
+                        <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-bold ${
+                          myBooking.status === 'active' ? 'bg-green-100 text-green-700' :
+                          myBooking.status === 'pending_signatures' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-blue-100 text-blue-700'
+                        }`}>
+                          {myBooking.status}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-text-muted">
-                    <p>No canteens available at your hostels</p>
-                  </div>
-                )}
-              </div>
-
-              {/* My Orders History */}
-              <div className="card">
-                <h4 className="font-bold text-lg mb-4 text-text-dark">📦 My Food Orders</h4>
-                {myOrdersLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="text-center">
-                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
-                      <p className="text-text-muted text-sm">Loading orders...</p>
                     </div>
                   </div>
-                ) : myOrders && myOrders.length > 0 ? (
-                  <div className="space-y-3">
-                    {myOrders.map(order => (
-                      <div key={order._id} className={`border-2 rounded-lg p-4 ${
-                        order.orderStatus === 'delivered' ? 'border-green-200 bg-green-50' :
-                        order.orderStatus === 'cancelled' ? 'border-red-200 bg-red-50' :
-                        order.orderStatus === 'ready' ? 'border-blue-200 bg-blue-50' :
-                        'border-orange-200 bg-orange-50'
-                      }`}>
+                </div>
+              )}
+
+              {/* My Active Subscriptions */}
+              {mySubscriptions.length > 0 && (
+                <div className="card">
+                  <h3 className="text-2xl font-bold mb-6 text-text-dark">🍱 My Active Subscriptions</h3>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {mySubscriptions.filter(s => s.status === 'active').map(sub => (
+                      <div key={sub._id} className="border-2 border-primary rounded-xl p-4 bg-gradient-to-br from-blue-50 to-purple-50">
                         <div className="flex items-start justify-between mb-3">
                           <div>
-                            <p className="font-bold text-text-dark">Order #{order.orderNumber}</p>
-                            <p className="text-sm text-text-muted">{order.canteen?.name}</p>
+                            <h4 className="font-bold text-lg text-text-dark">{sub.canteen?.name}</h4>
+                            <p className="text-sm text-text-muted">{sub.canteen?.hostel?.name}</p>
                           </div>
-                          <div className="text-right">
-                            <p className="font-bold text-lg">₹{order.totalAmount}</p>
-                            <span className={`text-xs font-semibold px-2 py-1 rounded inline-block ${
-                              order.orderStatus === 'delivered' ? 'bg-green-200 text-green-800' :
-                              order.orderStatus === 'cancelled' ? 'bg-red-200 text-red-800' :
-                              order.orderStatus === 'ready' ? 'bg-blue-200 text-blue-800' :
-                              'bg-orange-200 text-orange-800'
+                          <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
+                            {sub.status}
+                          </span>
+                        </div>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-muted">Plan:</span>
+                            <span className="font-semibold text-primary capitalize">{sub.plan.replace('_', ' ')}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-muted">Food Type:</span>
+                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                              sub.foodType === 'pure_veg' ? 'bg-green-100 text-green-700' :
+                              sub.foodType === 'veg' ? 'bg-lime-100 text-lime-700' :
+                              'bg-orange-100 text-orange-700'
                             }`}>
-                              {order.orderStatus}
+                              {sub.foodType === 'pure_veg' ? '🟢 Pure Veg' :
+                               sub.foodType === 'veg' ? '🥗 Veg' : '🍗 Non-Veg'}
                             </span>
                           </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-muted">Valid Until:</span>
+                            <span className="font-semibold text-text-dark">
+                              {new Date(sub.endDate).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-muted">Monthly Fee:</span>
+                            <span className="font-bold text-primary text-lg">₹{sub.price}</span>
+                          </div>
                         </div>
-                        <div className="text-sm text-text-muted">
-                          <p>Items: {order.items.map(i => `${i.name} x${i.quantity}`).join(', ')}</p>
-                          <p className="mt-1">Delivery to: Room {order.deliveryAddress?.roomNumber}, Floor {order.deliveryAddress?.floor}</p>
-                        </div>
-                        {order.orderStatus === 'delivered' && (
-                          <button
-                            onClick={() => {
-                              setSelectedOrderForFeedback(order)
-                              setShowFeedbackModal(true)
-                            }}
-                            className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-semibold transition text-sm"
-                          >
-                            ⭐ Rate & Feedback
-                          </button>
+                        {sub.spiceLevel && (
+                          <div className="mt-3 pt-3 border-t">
+                            <div className="text-xs text-text-muted">Preferences:</div>
+                            <div className="flex gap-2 mt-1 flex-wrap">
+                              <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">
+                                {sub.spiceLevel === 'mild' ? '😊 Mild' :
+                                 sub.spiceLevel === 'medium' ? '🌶️ Medium' :
+                                 sub.spiceLevel === 'hot' ? '🌶️🌶️ Hot' : '🌶️🌶️🌶️ Extra Hot'}
+                              </span>
+                              {sub.cuisinePreferences?.slice(0, 2).map((cuisine, idx) => (
+                                <span key={idx} className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+                                  {cuisine}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
                         )}
                       </div>
                     ))}
                   </div>
+                  <button
+                    onClick={() => {
+                      fetchAvailableCanteens()
+                      fetchMySubscriptions()
+                    }}
+                    className="mt-4 btn-secondary"
+                  >
+                    Refresh Subscriptions
+                  </button>
+                </div>
+              )}
+
+              {/* Browse Canteens */}
+              <div className="card">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-2xl font-bold text-text-dark">🍽️ Available Canteens</h3>
+                  <button
+                    onClick={fetchAvailableCanteens}
+                    className="btn-secondary"
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+
+                {canteensLoading ? (
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                    <p className="text-text-muted">Loading canteens...</p>
+                  </div>
+                ) : canteenError ? (
+                  <div className="text-center py-12">
+                    <div className="text-6xl mb-4">🍽️</div>
+                    <p className="text-red-600 text-lg mb-2">{canteenError}</p>
+                    <p className="text-text-muted text-sm mb-4">
+                      {!hasActiveBooking && 'Please book a room first to see available canteens.'}
+                    </p>
+                    <button onClick={fetchAvailableCanteens} className="btn-primary">
+                      🔄 Retry
+                    </button>
+                  </div>
+                ) : availableCanteens.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="text-6xl mb-4">🍽️</div>
+                    <p className="text-text-muted text-lg mb-4">No canteens available in your hostel yet</p>
+                    {!hasActiveBooking && (
+                      <p className="text-yellow-600 text-sm mb-4">⚠️ You need an active room booking to view canteens</p>
+                    )}
+                    <button onClick={fetchAvailableCanteens} className="btn-primary" disabled={canteensLoading}>
+                      {canteensLoading ? 'Loading...' : 'Load Canteens'}
+                    </button>
+                  </div>
                 ) : (
-                  <p className="text-center text-text-muted py-6">No orders yet. Place your first order!</p>
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {availableCanteens.map(canteen => (
+                      <div key={canteen._id} className="border-2 border-gray-200 rounded-xl p-4 hover:border-primary transition cursor-pointer"
+                        onClick={() => {
+                          setSelectedCanteen(canteen)
+                          fetchCanteenMenu(canteen._id)
+                        }}>
+                        <h4 className="font-bold text-lg text-text-dark mb-2">{canteen.name}</h4>
+                        <p className="text-sm text-text-muted mb-3">{canteen.description}</p>
+                        <div className="flex flex-wrap gap-1 mb-3">
+                          {canteen.cuisineTypes?.slice(0, 3).map((cuisine, idx) => (
+                            <span key={idx} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                              {cuisine}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-text-muted">Delivery: ₹{canteen.deliveryCharge || 0}</span>
+                          <span className="text-primary font-semibold">View Menu →</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
+
+              {/* Selected Canteen Menu */}
+              {selectedCanteen && (
+                <div className="card">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-2xl font-bold text-text-dark">{selectedCanteen.name} - Menu</h3>
+                      <p className="text-sm text-text-muted">{selectedCanteen.hostel?.name}</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedCanteen(null)}
+                      className="text-text-muted hover:text-text-dark"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+
+                  {/* Category Filter */}
+                  <div className="flex gap-2 mb-6 flex-wrap">
+                    {['all', 'breakfast', 'lunch', 'dinner', 'snacks', 'beverages'].map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setMenuCategory(cat)}
+                        className={`px-4 py-2 rounded-lg font-semibold capitalize transition ${
+                          menuCategory === cat
+                            ? 'bg-primary text-white'
+                            : 'bg-gray-100 text-text-dark hover:bg-gray-200'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Menu Items Grid */}
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {canteenMenu
+                      .filter(item => menuCategory === 'all' || item.category === menuCategory)
+                      .filter(item => item.isAvailable)
+                      .map(item => (
+                        <div key={item._id} className="border rounded-lg overflow-hidden hover:shadow-lg transition">
+                          {item.image?.url ? (
+                            <img src={item.image.url} alt={item.name} className="w-full h-40 object-cover" />
+                          ) : (
+                            <div className="w-full h-40 bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center text-6xl">
+                              🍽️
+                            </div>
+                          )}
+                          <div className="p-4">
+                            <div className="flex items-start justify-between mb-2">
+                              <h4 className="font-bold text-text-dark">{item.name}</h4>
+                              <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                                item.foodType === 'veg' ? 'bg-green-100 text-green-700' :
+                                item.foodType === 'non-veg' ? 'bg-red-100 text-red-700' :
+                                'bg-blue-100 text-blue-700'
+                              }`}>
+                                {item.foodType}
+                              </span>
+                            </div>
+                            <p className="text-sm text-text-muted mb-3">{item.description}</p>
+                            <div className="flex items-center justify-between">
+                              <span className="text-2xl font-bold text-primary">₹{item.price}</span>
+                              <span className="text-xs text-text-muted">⏱️ {item.preparationTime || 20} min</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+
+                  {canteenMenu.filter(item => menuCategory === 'all' || item.category === menuCategory).length === 0 && (
+                    <div className="text-center py-12">
+                      <p className="text-text-muted">No items available in this category</p>
+                    </div>
+                  )}
+
+                  {/* Subscription Plans */}
+                  {selectedCanteen.subscriptionPlans && (
+                    <div className="mt-8 pt-8 border-t">
+                      <h4 className="text-xl font-bold text-text-dark mb-4">📅 Monthly Subscription Plans</h4>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        {Object.entries(selectedCanteen.subscriptionPlans)
+                          .filter(([key, plan]) => plan.enabled)
+                          .map(([key, plan]) => (
+                            <div key={key} className="border-2 border-primary rounded-xl p-4 bg-gradient-to-br from-green-50 to-blue-50">
+                              <h5 className="font-bold text-lg text-primary capitalize mb-3">{key.replace('_', ' ')}</h5>
+                              <div className="space-y-2">
+                                {plan.pure_veg > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-sm">🟢 Pure Veg</span>
+                                    <span className="font-bold text-green-700">₹{plan.pure_veg}/month</span>
+                                  </div>
+                                )}
+                                {plan.veg > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-sm">🥗 Veg</span>
+                                    <span className="font-bold text-lime-700">₹{plan.veg}/month</span>
+                                  </div>
+                                )}
+                                {plan.non_veg_mix > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-sm">🍗 Non-Veg Mix</span>
+                                    <span className="font-bold text-orange-700">₹{plan.non_veg_mix}/month</span>
+                                  </div>
+                                )}
+                              </div>
+                              <button 
+                                onClick={() => handleSubscribeClick(key, plan)}
+                                className="w-full mt-4 btn-primary text-sm hover:shadow-lg transition"
+                                disabled={!plan.enabled}
+                              >
+                                Subscribe Now
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {activeTab === 'contracts' && (
             <div className="space-y-6">
               <div className="card">
-                <h3 className="text-2xl font-bold mb-6 text-text-dark">📄 My Contracts</h3>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-2xl font-bold text-text-dark">📄 My Rental Contracts</h3>
+                  <button
+                    onClick={fetchMyContracts}
+                    className="btn-secondary"
+                    disabled={contractsLoading}
+                  >
+                    {contractsLoading ? 'Loading...' : '🔄 Refresh'}
+                  </button>
+                </div>
+
+                {contractsLoading ? (
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                    <p className="text-text-muted mt-4">Loading contracts...</p>
+                  </div>
+                ) : myContracts.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="text-6xl mb-4">📋</div>
+                    <p className="text-text-muted text-lg mb-4">No contracts found</p>
+                    <button onClick={fetchMyContracts} className="btn-primary">
+                      Load My Contracts
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Statistics */}
+                    <div className="grid md:grid-cols-4 gap-4 mb-6">
+                      <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4 border-2 border-green-200">
+                        <div className="text-green-600 text-2xl mb-2">✅</div>
+                        <div className="text-2xl font-bold text-green-700">
+                          {myContracts.filter(c => c.status === 'active').length}
+                        </div>
+                        <div className="text-xs text-green-600 font-medium">Active</div>
+                      </div>
+                      <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl p-4 border-2 border-yellow-200">
+                        <div className="text-yellow-600 text-2xl mb-2">⏳</div>
+                        <div className="text-2xl font-bold text-yellow-700">
+                          {myContracts.filter(c => c.status === 'pending_signatures').length}
+                        </div>
+                        <div className="text-xs text-yellow-600 font-medium">Pending</div>
+                      </div>
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border-2 border-blue-200">
+                        <div className="text-blue-600 text-2xl mb-2">📝</div>
+                        <div className="text-2xl font-bold text-blue-700">
+                          {myContracts.filter(c => c.status === 'draft').length}
+                        </div>
+                        <div className="text-xs text-blue-600 font-medium">Draft</div>
+                      </div>
+                      <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border-2 border-gray-200">
+                        <div className="text-gray-600 text-2xl mb-2">🏁</div>
+                        <div className="text-2xl font-bold text-gray-700">
+                          {myContracts.filter(c => c.status === 'completed' || c.status === 'terminated').length}
+                        </div>
+                        <div className="text-xs text-gray-600 font-medium">Ended</div>
+                      </div>
+                    </div>
+
+                    {/* Contracts List */}
+                    {myContracts.map(contract => (
+                      <div key={contract._id} className={`border-2 rounded-xl overflow-hidden ${
+                        contract.status === 'active' ? 'border-green-300 bg-green-50' :
+                        contract.status === 'pending_signatures' ? 'border-yellow-300 bg-yellow-50' :
+                        contract.status === 'draft' ? 'border-blue-300 bg-blue-50' :
+                        'border-gray-300 bg-gray-50'
+                      }`}>
+                        {/* Contract Header */}
+                        <div className={`p-4 ${
+                          contract.status === 'active' ? 'bg-green-100' :
+                          contract.status === 'pending_signatures' ? 'bg-yellow-100' :
+                          contract.status === 'draft' ? 'bg-blue-100' :
+                          'bg-gray-100'
+                        }`}>
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="font-bold text-xl text-text-dark mb-1">
+                                {contract.hostel?.name || 'Hostel Name'}
+                              </h4>
+                              <p className="text-sm text-text-muted">
+                                📍 {contract.hostel?.address}, {contract.hostel?.city}
+                              </p>
+                            </div>
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                              contract.status === 'active' ? 'bg-green-200 text-green-800' :
+                              contract.status === 'pending_signatures' ? 'bg-yellow-200 text-yellow-800' :
+                              contract.status === 'draft' ? 'bg-blue-200 text-blue-800' :
+                              'bg-gray-200 text-gray-800'
+                            }`}>
+                              {contract.status.replace('_', ' ').toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Contract Details */}
+                        <div className="p-4 bg-white">
+                          <div className="grid md:grid-cols-2 gap-6">
+                            {/* Room Details */}
+                            <div>
+                              <h5 className="font-semibold text-text-dark mb-3 flex items-center gap-2">
+                                <span className="text-xl">🚪</span> Room Details
+                              </h5>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Room Number:</span>
+                                  <span className="font-semibold text-text-dark">{contract.room?.roomNumber || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Floor:</span>
+                                  <span className="font-semibold text-text-dark">{contract.room?.floor || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Type:</span>
+                                  <span className="font-semibold text-text-dark capitalize">{contract.room?.type || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Capacity:</span>
+                                  <span className="font-semibold text-text-dark">{contract.room?.capacity || 'N/A'} persons</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Contract Duration */}
+                            <div>
+                              <h5 className="font-semibold text-text-dark mb-3 flex items-center gap-2">
+                                <span className="text-xl">📅</span> Duration
+                              </h5>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Start Date:</span>
+                                  <span className="font-semibold text-text-dark">
+                                    {new Date(contract.startDate).toLocaleDateString()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">End Date:</span>
+                                  <span className="font-semibold text-text-dark">
+                                    {new Date(contract.endDate).toLocaleDateString()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Duration:</span>
+                                  <span className="font-semibold text-primary">
+                                    {Math.ceil((new Date(contract.endDate) - new Date(contract.startDate)) / (1000 * 60 * 60 * 24))} days
+                                  </span>
+                                </div>
+                                {contract.status === 'active' && (
+                                  <div className="flex justify-between">
+                                    <span className="text-text-muted">Days Remaining:</span>
+                                    <span className="font-semibold text-green-700">
+                                      {Math.max(0, Math.ceil((new Date(contract.endDate) - new Date()) / (1000 * 60 * 60 * 24)))} days
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Financial Details */}
+                            <div>
+                              <h5 className="font-semibold text-text-dark mb-3 flex items-center gap-2">
+                                <span className="text-xl">💰</span> Financial
+                              </h5>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Monthly Rent:</span>
+                                  <span className="font-bold text-primary text-lg">₹{contract.monthlyRent || 0}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Security Deposit:</span>
+                                  <span className="font-semibold text-text-dark">₹{contract.securityDeposit || 0}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Payment Status:</span>
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                    contract.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' :
+                                    contract.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-red-100 text-red-700'
+                                  }`}>
+                                    {contract.paymentStatus || 'pending'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Owner Details */}
+                            <div>
+                              <h5 className="font-semibold text-text-dark mb-3 flex items-center gap-2">
+                                <span className="text-xl">👤</span> Owner
+                              </h5>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Name:</span>
+                                  <span className="font-semibold text-text-dark">{contract.owner?.name || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Phone:</span>
+                                  <span className="font-semibold text-text-dark">{contract.owner?.phone || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-text-muted">Email:</span>
+                                  <span className="font-semibold text-text-dark text-xs">{contract.owner?.email || 'N/A'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Terms and Conditions */}
+                          {contract.terms && contract.terms.length > 0 && (
+                            <div className="mt-6 pt-6 border-t">
+                              <h5 className="font-semibold text-text-dark mb-3">📋 Terms & Conditions</h5>
+                              <ul className="space-y-1 text-sm text-text-muted">
+                                {contract.terms.map((term, idx) => (
+                                  <li key={idx} className="flex items-start gap-2">
+                                    <span className="text-primary mt-1">•</span>
+                                    <span>{term}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* Actions */}
+                          {contract.status === 'active' && (
+                            <div className="mt-6 pt-6 border-t flex gap-3">
+                              <button className="btn-primary flex-1">
+                                📄 View Full Contract
+                              </button>
+                              <button className="btn-secondary flex-1">
+                                📞 Contact Owner
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
                 {contractsLoading ? (
                   <div className="flex items-center justify-center py-12">
@@ -2564,6 +3124,7 @@ export default function TenantDashboard() {
                   </button>
                 </div>
 
+
                 <p className="text-xs text-gray-500 text-center mt-3">
                   By booking, you agree to the terms and conditions. The owner will review your request and contact you.
                 </p>
@@ -2574,900 +3135,235 @@ export default function TenantDashboard() {
       )}
 
       {/* Subscription Modal */}
-      {showSubscriptionModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
-              <h3 className="text-2xl font-bold text-gray-800">🍽️ Subscribe to Meal Plan</h3>
+      {showSubscriptionModal && selectedPlan && selectedCanteen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-8 shadow-2xl transform transition-all">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h3 className="text-3xl font-bold text-text-dark">
+                  🍱 Subscribe Now
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Get fresh meals delivered to your room
+                </p>
+              </div>
               <button
                 onClick={() => {
                   setShowSubscriptionModal(false)
-                  setSelectedCanteen(null)
+                  setSelectedPlan(null)
                 }}
-                className="text-gray-500 hover:text-gray-700 text-2xl"
+                className="text-gray-400 hover:text-gray-600 transition text-2xl font-light"
               >
-                ×
+                ✕
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6">
-              {canteens && canteens.length === 0 ? (
-                <div className="text-center py-12">
-                  <p className="text-text-muted text-lg">No canteens available</p>
-                </div>
-              ) : (
-                <form onSubmit={handleSubscribeToCanteen} className="space-y-6">
-                  {/* Select Canteen */}
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Select Canteen <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={selectedCanteen?._id || ''}
-                      onChange={(e) => {
-                        const hostel = canteens.find(h => h._id === e.target.value)
-                        setSelectedCanteen(hostel)
-                      }}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                      required
-                    >
-                      <option value="">Choose a canteen...</option>
-                      {canteens.map(hostel => (
-                        <option key={hostel._id} value={hostel._id}>
-                          {hostel.canteen?.name} - {hostel.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Available Plans */}
-                  {selectedCanteen && selectedCanteen.canteen?.subscriptionPlans && (
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-3">
-                        Choose Plan <span className="text-red-500">*</span>
-                      </label>
-                      <div className="grid grid-cols-2 gap-3">
-                        {Object.entries(selectedCanteen.canteen.subscriptionPlans).map(([key, plan]) => (
-                          plan.enabled && (
-                            <div
-                              key={key}
-                              onClick={() => setSubscriptionData({ ...subscriptionData, plan: key })}
-                              className={`p-4 border-2 rounded-lg cursor-pointer transition ${
-                                subscriptionData.plan === key
-                                  ? 'border-primary bg-blue-50'
-                                  : 'border-gray-200 hover:border-primary'
-                              }`}
-                            >
-                              <h4 className="font-bold text-text-dark capitalize mb-1">
-                                {key.replace(/_/g, ' ')}
-                              </h4>
-                              <p className="text-sm text-primary font-bold">₹{plan.price}/month</p>
-                            </div>
-                          )
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Left Side - Canteen & Plan Info */}
+              <div>
+                {/* Canteen Card */}
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-5 mb-6 border border-blue-100">
+                  <div className="flex items-start gap-4">
+                    <div className="w-16 h-16 bg-white rounded-xl flex items-center justify-center text-2xl shadow-sm">
+                      🍽️
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-bold text-lg text-text-dark">{selectedCanteen.name}</h4>
+                      <p className="text-sm text-gray-600 mt-1">{selectedCanteen.description?.substring(0, 50)}...</p>
+                      <div className="flex gap-2 mt-3">
+                        {selectedCanteen.cuisineTypes?.slice(0, 2).map(cuisine => (
+                          <span key={cuisine} className="text-xs bg-white px-2 py-1 rounded-full text-gray-700">
+                            {cuisine}
+                          </span>
                         ))}
                       </div>
                     </div>
-                  )}
-
-                  {/* Duration */}
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Duration (Months) <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={subscriptionData.duration}
-                      onChange={(e) => setSubscriptionData({ ...subscriptionData, duration: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                      required
-                    >
-                      <option value="1">1 Month</option>
-                      <option value="3">3 Months</option>
-                      <option value="6">6 Months</option>
-                      <option value="12">12 Months</option>
-                    </select>
                   </div>
+                </div>
 
-                  {/* Price Summary */}
-                  {selectedCanteen && selectedCanteen.canteen?.subscriptionPlans && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-gray-700">Monthly Price:</span>
-                        <span className="font-bold text-primary">
-                          ₹{selectedCanteen.canteen.subscriptionPlans[subscriptionData.plan]?.price || 0}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-gray-700">Duration:</span>
-                        <span className="font-bold">{subscriptionData.duration} month(s)</span>
-                      </div>
-                      <div className="border-t pt-2 flex justify-between items-center">
-                        <span className="text-lg font-bold text-gray-800">Total Amount:</span>
-                        <span className="text-2xl font-bold text-primary">
-                          ₹{(selectedCanteen.canteen.subscriptionPlans[subscriptionData.plan]?.price || 0) * subscriptionData.duration}
-                        </span>
-                      </div>
+                {/* Plan Card */}
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-5 border border-green-100">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 bg-green-200 rounded-lg flex items-center justify-center">
+                      📅
                     </div>
+                    <div>
+                      <p className="text-xs text-gray-600 font-medium">Selected Plan</p>
+                      <p className="font-bold text-lg text-text-dark capitalize">
+                        {selectedPlan.key.replace('_', ' ')}
+                      </p>
+                    </div>
+                  </div>
+                  {selectedPlan.data.weeklyMenu && Object.values(selectedPlan.data.weeklyMenu).filter(Boolean).length > 0 && (
+                    <p className="text-xs text-green-700 bg-white rounded-lg px-3 py-2 inline-block">
+                      ✓ Weekly menu available
+                    </p>
                   )}
+                </div>
+              </div>
 
-                  {/* Buttons */}
-                  <div className="flex gap-3 pt-4">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowSubscriptionModal(false)
-                        setSelectedCanteen(null)
-                      }}
-                      className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
-                      disabled={subscriptionLoading}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="flex-1 bg-primary text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition flex items-center justify-center gap-2"
-                      disabled={subscriptionLoading || !selectedCanteen}
-                    >
-                      {subscriptionLoading ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          💳 Subscribe Now
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Contract Details Modal */}
-      {selectedContractForDetails && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-lg max-w-2xl w-full my-auto shadow-2xl">
-            {/* Modal Header */}
-            <div className="sticky top-0 bg-gradient-to-r from-primary to-blue-700 text-white p-6 flex items-center justify-between rounded-t-lg z-10">
+              {/* Right Side - Food Type Selection */}
               <div>
-                <h2 className="text-2xl font-bold">{selectedContractForDetails.hostel?.name}</h2>
-                <p className="text-blue-100 text-sm mt-1">Contract Details</p>
-              </div>
-              <button
-                onClick={() => setSelectedContractForDetails(null)}
-                className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            {/* Modal Body - Scrollable */}
-            <div className="overflow-y-auto max-h-[calc(100vh-200px)]">
-              <div className="p-6 space-y-6">
-              {/* Status Badge */}
-              <div className="flex items-center gap-3">
-                <span className={`px-4 py-2 rounded-full text-sm font-semibold ${
-                  selectedContractForDetails.status === 'active' ? 'bg-green-200 text-green-800' :
-                  selectedContractForDetails.status === 'pending_signatures' ? 'bg-yellow-200 text-yellow-800' :
-                  selectedContractForDetails.status === 'draft' ? 'bg-blue-200 text-blue-800' :
-                  'bg-gray-200 text-gray-800'
-                }`}>
-                  {selectedContractForDetails.status === 'active' ? '✓ Active' :
-                   selectedContractForDetails.status === 'pending_signatures' ? '⏳ Pending Approval' :
-                   selectedContractForDetails.status === 'draft' ? '📝 Draft' :
-                   selectedContractForDetails.status}
-                </span>
-                <p className="text-text-muted text-sm">Contract ID: <span className="font-mono">{selectedContractForDetails._id?.slice(-12)}</span></p>
-              </div>
-
-              {/* Room Information */}
-              <div className="border-b pb-6">
-                <h3 className="text-lg font-bold text-text-dark mb-4">🛏️ Room Information</h3>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Room Number</p>
-                    <p className="text-2xl font-bold text-primary">{selectedContractForDetails.room?.roomNumber || 'N/A'}</p>
-                  </div>
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Room Type</p>
-                    <p className="text-lg font-semibold text-text-dark capitalize">{selectedContractForDetails.room?.roomType || 'N/A'}</p>
-                  </div>
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Floor</p>
-                    <p className="text-lg font-semibold text-text-dark">{selectedContractForDetails.room?.floor || 'N/A'}</p>
-                  </div>
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Capacity</p>
-                    <p className="text-lg font-semibold text-text-dark">{selectedContractForDetails.room?.capacity || 'N/A'} beds</p>
-                  </div>
+                <label className="block text-sm font-bold text-text-dark mb-4">
+                  Choose Your Food Type 🥘
+                </label>
+                <div className="space-y-3">
+                  {selectedPlan.data.pure_veg > 0 && (
+                    <label className="flex items-center p-4 border-2 rounded-2xl cursor-pointer transition-all"
+                      style={{
+                        borderColor: selectedFoodType === 'pure_veg' ? '#2563eb' : '#e5e7eb',
+                        backgroundColor: selectedFoodType === 'pure_veg' ? '#eff6ff' : 'white'
+                      }}
+                    >
+                      <div className="flex-shrink-0">
+                        <input
+                          type="radio"
+                          name="foodType"
+                          value="pure_veg"
+                          checked={selectedFoodType === 'pure_veg'}
+                          onChange={(e) => setSelectedFoodType(e.target.value)}
+                          className="w-5 h-5 text-primary"
+                        />
+                      </div>
+                      <div className="ml-4 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🟢</span>
+                          <span className="font-bold text-gray-900">Pure Vegetarian</span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1">100% vegan & vegetarian meals</p>
+                      </div>
+                      <span className="text-lg font-bold text-primary">
+                        ₹{selectedPlan.data.pure_veg}
+                      </span>
+                    </label>
+                  )}
+                  {selectedPlan.data.veg > 0 && (
+                    <label className="flex items-center p-4 border-2 rounded-2xl cursor-pointer transition-all"
+                      style={{
+                        borderColor: selectedFoodType === 'veg' ? '#2563eb' : '#e5e7eb',
+                        backgroundColor: selectedFoodType === 'veg' ? '#eff6ff' : 'white'
+                      }}
+                    >
+                      <div className="flex-shrink-0">
+                        <input
+                          type="radio"
+                          name="foodType"
+                          value="veg"
+                          checked={selectedFoodType === 'veg'}
+                          onChange={(e) => setSelectedFoodType(e.target.value)}
+                          className="w-5 h-5 text-primary"
+                        />
+                      </div>
+                      <div className="ml-4 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🥗</span>
+                          <span className="font-bold text-gray-900">Vegetarian</span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1">Vegetables with dairy products</p>
+                      </div>
+                      <span className="text-lg font-bold text-primary">
+                        ₹{selectedPlan.data.veg}
+                      </span>
+                    </label>
+                  )}
+                  {selectedPlan.data.non_veg_mix > 0 && (
+                    <label className="flex items-center p-4 border-2 rounded-2xl cursor-pointer transition-all"
+                      style={{
+                        borderColor: selectedFoodType === 'non_veg_mix' ? '#2563eb' : '#e5e7eb',
+                        backgroundColor: selectedFoodType === 'non_veg_mix' ? '#eff6ff' : 'white'
+                      }}
+                    >
+                      <div className="flex-shrink-0">
+                        <input
+                          type="radio"
+                          name="foodType"
+                          value="non_veg_mix"
+                          checked={selectedFoodType === 'non_veg_mix'}
+                          onChange={(e) => setSelectedFoodType(e.target.value)}
+                          className="w-5 h-5 text-primary"
+                        />
+                      </div>
+                      <div className="ml-4 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🍗</span>
+                          <span className="font-bold text-gray-900">Non-Veg Mix</span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1">Mix of vegetables & non-veg items</p>
+                      </div>
+                      <span className="text-lg font-bold text-primary">
+                        ₹{selectedPlan.data.non_veg_mix}
+                      </span>
+                    </label>
+                  )}
                 </div>
               </div>
-
-              {/* Financial Details */}
-              <div className="border-b pb-6">
-                <h3 className="text-lg font-bold text-text-dark mb-4">💰 Financial Details</h3>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="bg-green-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Monthly Rent</p>
-                    <p className="text-2xl font-bold text-green-600">₹{selectedContractForDetails.rent || 'N/A'}</p>
-                  </div>
-                  <div className="bg-orange-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Security Deposit</p>
-                    <p className="text-2xl font-bold text-orange-600">₹{selectedContractForDetails.securityDeposit || 'N/A'}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Contract Duration */}
-              <div className="border-b pb-6">
-                <h3 className="text-lg font-bold text-text-dark mb-4">📅 Contract Duration</h3>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div className="bg-purple-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Start Date</p>
-                    <p className="text-lg font-semibold text-text-dark">
-                      {selectedContractForDetails.startDate ? new Date(selectedContractForDetails.startDate).toLocaleDateString('en-IN', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric'
-                      }) : 'N/A'}
-                    </p>
-                  </div>
-                  <div className="bg-purple-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">End Date</p>
-                    <p className="text-lg font-semibold text-text-dark">
-                      {selectedContractForDetails.endDate ? new Date(selectedContractForDetails.endDate).toLocaleDateString('en-IN', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric'
-                      }) : 'Ongoing'}
-                    </p>
-                  </div>
-                  <div className="bg-purple-50 rounded-lg p-4">
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-2">Duration</p>
-                    <p className="text-lg font-semibold text-text-dark">
-                      {selectedContractForDetails.startDate && selectedContractForDetails.endDate
-                        ? `${Math.ceil((new Date(selectedContractForDetails.endDate) - new Date(selectedContractForDetails.startDate)) / (1000 * 60 * 60 * 24 * 30))} months`
-                        : 'Ongoing'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Owner Information */}
-              <div className="border-b pb-6">
-                <h3 className="text-lg font-bold text-text-dark mb-4">👤 Owner Information</h3>
-                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                  <div>
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-1">Name</p>
-                    <p className="text-lg font-semibold text-text-dark">{selectedContractForDetails.owner?.name || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-1">Phone</p>
-                    <p className="text-lg font-semibold text-text-dark">📞 {selectedContractForDetails.owner?.phone || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-text-muted uppercase mb-1">Email</p>
-                    <p className="text-lg font-semibold text-text-dark">✉️ {selectedContractForDetails.owner?.email || 'N/A'}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setSelectedContractForDetails(null)}
-                  className="flex-1 bg-gray-200 text-text-dark py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
-                >
-                  Close
-                </button>
-                {selectedContractForDetails.status === 'active' && (
-                  <button
-                    onClick={() => {
-                      setContractToTerminate(selectedContractForDetails)
-                      setSelectedContractForDetails(null)
-                    }}
-                    className="flex-1 bg-red-500 text-white py-3 rounded-lg font-semibold hover:bg-red-600 transition"
-                  >
-                    ⚠️ Terminate Contract
-                  </button>
-                )}
-              </div>
-            </div>
             </div>
 
-            {/* Modal Footer - Sticky */}
-            <div className="sticky bottom-0 flex gap-3 p-6 border-t bg-white rounded-b-lg">
-              <button
-                onClick={() => setSelectedContractForDetails(null)}
-                className="flex-1 bg-gray-200 text-text-dark py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
-              >
-                Close
-              </button>
-              {selectedContractForDetails.status === 'active' && (
-                <button
-                  onClick={() => {
-                    setContractToTerminate(selectedContractForDetails)
-                    setSelectedContractForDetails(null)
-                  }}
-                  className="flex-1 bg-red-500 text-white py-3 rounded-lg font-semibold hover:bg-red-600 transition"
-                >
-                  ⚠️ Terminate Contract
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Terminate Contract Confirmation Modal */}
-      {contractToTerminate && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl max-w-md w-full my-auto shadow-2xl">
-            {/* Modal Header - Gradient */}
-            <div className="bg-gradient-to-r from-red-600 to-red-700 text-white p-6 rounded-t-xl">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
-                  <span className="text-2xl">⚠️</span>
+            {/* Price Summary */}
+            <div className="mt-8 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100">
+              <div className="grid grid-cols-3 gap-4 text-center mb-4 pb-4 border-b border-blue-200">
+                <div>
+                  <p className="text-xs text-gray-600 font-medium">CANTEEN</p>
+                  <p className="font-bold text-gray-900 truncate">{selectedCanteen.name}</p>
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold">Terminate Contract</h2>
-                  <p className="text-red-100 text-sm mt-1">This action cannot be undone</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Body - Scrollable */}
-            <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
-              <div className="p-6 space-y-5">
-                {/* Contract Summary Card */}
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-xl p-5">
-                  <p className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-3">📋 Contract Summary</p>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-text-muted font-medium">Hostel:</span>
-                      <span className="font-bold text-text-dark">{contractToTerminate.hostel?.name}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-text-muted font-medium">Room:</span>
-                      <span className="font-bold text-text-dark">{contractToTerminate.room?.roomNumber}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-text-muted font-medium">Monthly Rent:</span>
-                      <span className="font-bold text-green-600">₹{contractToTerminate.rent}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Important Checklist */}
-                <div className="bg-amber-50 border-l-4 border-amber-500 rounded-lg p-4">
-                  <p className="text-sm font-bold text-amber-900 mb-3 flex items-center gap-2">
-                    <span>⚡</span> Important Reminders
+                  <p className="text-xs text-gray-600 font-medium">PLAN</p>
+                  <p className="font-bold text-gray-900 capitalize">
+                    {selectedPlan.key.replace('_', ' ')}
                   </p>
-                  <ul className="space-y-2">
-                    <li className="flex items-start gap-2 text-sm text-amber-800">
-                      <span className="text-amber-600 mt-0.5">✓</span>
-                      <span>Contact the owner <strong>before</strong> submitting termination</span>
-                    </li>
-                    <li className="flex items-start gap-2 text-sm text-amber-800">
-                      <span className="text-amber-600 mt-0.5">✓</span>
-                      <span>Ensure <strong>all dues are settled</strong></span>
-                    </li>
-                    <li className="flex items-start gap-2 text-sm text-amber-800">
-                      <span className="text-amber-600 mt-0.5">✓</span>
-                      <span>Plan your <strong>room vacate date</strong></span>
-                    </li>
-                    <li className="flex items-start gap-2 text-sm text-amber-800">
-                      <span className="text-amber-600 mt-0.5">✓</span>
-                      <span>Owner will be notified <strong>automatically</strong></span>
-                    </li>
-                  </ul>
                 </div>
-
-                {/* Owner Contact Card */}
-                <div className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200 rounded-xl p-5">
-                  <p className="text-xs font-bold text-purple-600 uppercase tracking-wide mb-3">📞 Quick Contact</p>
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-xs text-text-muted font-semibold mb-1">Owner Name</p>
-                      <p className="font-bold text-text-dark text-lg">{contractToTerminate.owner?.name || 'N/A'}</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={() => window.location.href = `tel:${contractToTerminate.owner?.phone}`}
-                        className="bg-white border-2 border-purple-300 text-purple-700 py-2 rounded-lg text-sm font-semibold hover:bg-purple-50 transition flex items-center justify-center gap-2"
-                      >
-                        📱 Call
-                      </button>
-                      <button
-                        onClick={() => window.location.href = `mailto:${contractToTerminate.owner?.email}`}
-                        className="bg-white border-2 border-purple-300 text-purple-700 py-2 rounded-lg text-sm font-semibold hover:bg-purple-50 transition flex items-center justify-center gap-2"
-                      >
-                        ✉️ Email
-                      </button>
-                    </div>
-                  </div>
+                <div>
+                  <p className="text-xs text-gray-600 font-medium">DURATION</p>
+                  <p className="font-bold text-gray-900">1 Month</p>
                 </div>
-
-                {/* Confirmation Checkbox */}
-                <label className="flex items-start gap-3 bg-gray-50 border-2 border-gray-200 rounded-xl p-4 cursor-pointer hover:bg-gray-100 transition">
-                  <input
-                    type="checkbox"
-                    className="w-5 h-5 accent-red-600 mt-1 cursor-pointer"
-                    id="confirmTerminate"
-                  />
-                  <span className="text-sm font-semibold text-text-dark leading-relaxed">
-                    I understand that terminating this contract will notify the owner and this action cannot be reversed. I have settled all dues.
-                  </span>
-                </label>
+              </div>
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm text-gray-600 font-medium">MONTHLY AMOUNT</p>
+                  <p className="text-2xl font-bold text-primary mt-1">
+                    ₹{selectedPlan.data[selectedFoodType]}/month
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-600">Auto-renews every month</p>
+                  <p className="text-sm text-green-600 font-bold mt-1">✓ Flexible cancellation</p>
+                </div>
               </div>
             </div>
 
-            {/* Modal Footer - Sticky */}
-            <div className="sticky bottom-0 flex gap-3 p-6 border-t bg-gradient-to-r from-gray-50 to-gray-100 rounded-b-xl">
-              <button
-                onClick={() => setContractToTerminate(null)}
-                className="flex-1 bg-gray-300 text-gray-800 py-3 rounded-lg font-bold hover:bg-gray-400 transition transform hover:scale-105"
-              >
-                ← Cancel
-              </button>
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-8">
               <button
                 onClick={() => {
-                  const confirmed = document.getElementById('confirmTerminate')?.checked
-                  if (confirmed) {
-                    setTerminationSuccess(true)
-                    setContractToTerminate(null)
-                  } else {
-                    setTerminationError('Please confirm that you understand the termination process.')
-                    setTimeout(() => setTerminationError(null), 3000)
-                  }
+                  setShowSubscriptionModal(false)
+                  setSelectedPlan(null)
                 }}
-                className="flex-1 bg-gradient-to-r from-red-600 to-red-700 text-white py-3 rounded-lg font-bold hover:shadow-lg transition transform hover:scale-105"
+                className="flex-1 px-6 py-3 rounded-xl border-2 border-gray-300 font-bold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition"
+                disabled={subscriptionLoading}
               >
-                🗑️ Terminate Now
+                Cancel
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Termination Success Modal */}
-      {terminationSuccess && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl animate-in">
-            {/* Success Header */}
-            <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-8 text-center rounded-t-xl">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-white bg-opacity-20 rounded-full mb-4">
-                <span className="text-4xl">✅</span>
-              </div>
-              <h2 className="text-2xl font-bold">Termination Submitted</h2>
-              <p className="text-green-100 text-sm mt-2">Request successfully processed</p>
-            </div>
-
-            {/* Success Body */}
-            <div className="p-8 space-y-6">
-              <div className="bg-green-50 border-l-4 border-green-500 rounded-lg p-4">
-                <p className="text-sm text-green-800 font-semibold mb-2">✓ What happens next:</p>
-                <ul className="space-y-2 text-sm text-green-700">
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-600">→</span>
-                    <span>The hostel owner will be notified automatically</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-600">→</span>
-                    <span>Owner may contact you to confirm details</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-600">→</span>
-                    <span>Ensure you vacate by the agreed date</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-600">→</span>
-                    <span>Your contract status will update to "Terminated"</span>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-2">📋 Important</p>
-                <p className="text-sm text-blue-700">
-                  Keep your communication records with the owner. If there are any disputes regarding security deposit or dues, these records will be important.
-                </p>
-              </div>
-
               <button
-                onClick={() => setTerminationSuccess(false)}
-                className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white py-3 rounded-lg font-bold hover:shadow-lg transition transform hover:scale-105"
+                onClick={handleSubscriptionPurchase}
+                className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold hover:shadow-lg transition disabled:opacity-50"
+                disabled={subscriptionLoading}
               >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Termination Error Modal */}
-      {terminationError && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl animate-in">
-            {/* Error Header */}
-            <div className="bg-gradient-to-r from-red-500 to-red-600 text-white p-8 text-center rounded-t-xl">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-white bg-opacity-20 rounded-full mb-4">
-                <span className="text-4xl">⚠️</span>
-              </div>
-              <h2 className="text-2xl font-bold">Confirmation Required</h2>
-            </div>
-
-            {/* Error Body */}
-            <div className="p-8 text-center">
-              <p className="text-text-dark font-semibold mb-6">{terminationError}</p>
-              <button
-                onClick={() => setTerminationError(null)}
-                className="w-full bg-gradient-to-r from-red-500 to-red-600 text-white py-3 rounded-lg font-bold hover:shadow-lg transition"
-              >
-                Understood
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Custom Order Modal */}
-      {showCustomOrderModal && selectedCanteenForOrder && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="sticky top-0 bg-gradient-to-r from-green-600 to-green-700 text-white px-6 py-4 flex items-center justify-between z-10">
-              <h3 className="text-2xl font-bold">📋 Place Custom Food Order</h3>
-              <button
-                onClick={() => {
-                  setShowCustomOrderModal(false)
-                  setCustomOrderItems([])
-                  setOrderFormData({ specialInstructions: '', deliveryAddress: { roomNumber: '', floor: '', notes: '' } })
-                  setOrderMessage('')
-                }}
-                className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition"
-              >
-                ×
+                {subscriptionLoading ? (
+                  <>
+                    <span className="inline-block animate-spin mr-2">⟳</span>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    💳 Pay ₹{selectedPlan.data[selectedFoodType]}
+                  </>
+                )}
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6">
-              <div className="grid md:grid-cols-3 gap-6">
-                {/* Menu Items Column */}
-                <div className="md:col-span-2 space-y-4">
-                  <h4 className="font-bold text-lg text-text-dark">🍕 {selectedCanteenForOrder.canteen?.name} Menu</h4>
-
-                  {/* Filters */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <select
-                      value={categoryFilter}
-                      onChange={(e) => setCategoryFilter(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
-                    >
-                      <option value="all">All Categories</option>
-                      <option value="breakfast">Breakfast</option>
-                      <option value="lunch">Lunch</option>
-                      <option value="dinner">Dinner</option>
-                      <option value="snacks">Snacks</option>
-                      <option value="beverages">Beverages</option>
-                    </select>
-                    <select
-                      value={foodTypeFilter}
-                      onChange={(e) => setFoodTypeFilter(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500"
-                    >
-                      <option value="all">All Types</option>
-                      <option value="veg">Veg</option>
-                      <option value="non-veg">Non-Veg</option>
-                      <option value="vegan">Vegan</option>
-                    </select>
-                  </div>
-
-                  {/* Menu Items List */}
-                  <div className="border rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3 bg-gray-50">
-                    {menuLoadingCanteenId === selectedCanteenForOrder.canteen._id ? (
-                      <div className="flex items-center justify-center py-8">
-                        <div className="text-center">
-                          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mb-2"></div>
-                          <p className="text-text-muted text-sm">Loading menu...</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {canteenMenuItems[selectedCanteenForOrder.canteen._id]?.filter(item => {
-                          const matchCategory = categoryFilter === 'all' || item.category === categoryFilter
-                          const matchType = foodTypeFilter === 'all' || item.foodType === foodTypeFilter
-                          return matchCategory && matchType && item.isAvailable
-                        }).length === 0 ? (
-                          <p className="text-center text-text-muted py-8">No items available with selected filters</p>
-                        ) : (
-                          canteenMenuItems[selectedCanteenForOrder.canteen._id]?.filter(item => {
-                            const matchCategory = categoryFilter === 'all' || item.category === categoryFilter
-                            const matchType = foodTypeFilter === 'all' || item.foodType === foodTypeFilter
-                            return matchCategory && matchType && item.isAvailable
-                          }).map(item => (
-                            <div key={item._id} className="bg-white border border-gray-200 rounded-lg p-3 flex items-start justify-between hover:border-green-500 transition">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <h5 className="font-semibold text-text-dark">{item.name}</h5>
-                                  {item.foodType === 'non-veg' && <span className="text-red-600 font-bold text-xs">🔴</span>}
-                                  {item.foodType === 'veg' && <span className="text-green-600 font-bold text-xs">🟢</span>}
-                                  {item.foodType === 'vegan' && <span className="text-orange-600 font-bold text-xs">🟡</span>}
-                                </div>
-                                <p className="text-sm text-text-muted">{item.description}</p>
-                                <div className="flex items-center gap-3 mt-2">
-                                  <span className="text-sm font-bold text-primary">₹{item.price}</span>
-                                  <span className="text-xs text-text-muted">⏱️ {item.preparationTime}min</span>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => addItemToOrder(item)}
-                                className="bg-green-600 text-white px-3 py-1 rounded-lg font-semibold hover:bg-green-700 transition text-sm whitespace-nowrap ml-2"
-                              >
-                                + Add
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Order Summary Column */}
-                <div className="md:col-span-1 space-y-4">
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 rounded-lg p-4 sticky top-20">
-                    <h4 className="font-bold text-lg text-green-900 mb-4">🛒 Your Order</h4>
-                    
-                    {customOrderItems.length === 0 ? (
-                      <p className="text-center text-text-muted text-sm py-4">Add items to get started</p>
-                    ) : (
-                      <>
-                        <div className="space-y-2 mb-4 max-h-[200px] overflow-y-auto">
-                          {customOrderItems.map(orderItem => (
-                            <div key={orderItem.menuItem._id} className="bg-white rounded-lg p-2 text-sm">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="font-semibold">{orderItem.menuItem.name}</span>
-                                <span className="text-green-600 font-bold">₹{orderItem.menuItem.price * orderItem.quantity}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => updateItemQuantity(orderItem.menuItem._id, orderItem.quantity - 1)}
-                                  className="bg-red-100 text-red-600 w-6 h-6 rounded flex items-center justify-center hover:bg-red-200"
-                                >
-                                  −
-                                </button>
-                                <span className="w-8 text-center font-semibold">{orderItem.quantity}</span>
-                                <button
-                                  onClick={() => updateItemQuantity(orderItem.menuItem._id, orderItem.quantity + 1)}
-                                  className="bg-green-100 text-green-600 w-6 h-6 rounded flex items-center justify-center hover:bg-green-200"
-                                >
-                                  +
-                                </button>
-                                <button
-                                  onClick={() => removeItemFromOrder(orderItem.menuItem._id)}
-                                  className="ml-auto text-red-600 hover:text-red-800 font-bold text-xs"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Price Summary */}
-                        <div className="bg-white rounded-lg p-3 space-y-2 border-t-2">
-                          <div className="flex justify-between text-sm">
-                            <span>Subtotal:</span>
-                            <span className="font-semibold">₹{customOrderItems.reduce((sum, item) => sum + (item.menuItem.price * item.quantity), 0)}</span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span>Delivery:</span>
-                            <span className="font-semibold">₹{selectedCanteenForOrder.canteen?.deliveryCharge || 0}</span>
-                          </div>
-                          <div className="flex justify-between text-lg font-bold border-t pt-2 text-green-700">
-                            <span>Total:</span>
-                            <span>₹{customOrderItems.reduce((sum, item) => sum + (item.menuItem.price * item.quantity), 0) + (selectedCanteenForOrder.canteen?.deliveryCharge || 0)}</span>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Delivery & Payment Form */}
-              {customOrderItems.length > 0 && (
-                <form onSubmit={handlePlaceCustomOrder} className="mt-6 space-y-4 bg-blue-50 rounded-lg p-4">
-                  <div className="flex items-start gap-2 bg-blue-100 border border-blue-300 rounded-lg p-3 mb-4">
-                    <span className="text-blue-600 font-bold text-lg">ℹ️</span>
-                    <p className="text-sm text-blue-700">
-                      Your room number and floor are pre-filled from your profile. You can edit them if needed.
-                    </p>
-                  </div>
-                  
-                  <h4 className="font-bold text-lg text-text-dark">📦 Delivery & Instructions</h4>
-                  
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Room Number <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={orderFormData.deliveryAddress.roomNumber || ''}
-                        onChange={(e) => setOrderFormData({
-                          ...orderFormData,
-                          deliveryAddress: { ...orderFormData.deliveryAddress, roomNumber: e.target.value }
-                        })}
-                        placeholder="e.g., 301"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Floor</label>
-                      <input
-                        type="text"
-                        value={orderFormData.deliveryAddress.floor || ''}
-                        onChange={(e) => setOrderFormData({
-                          ...orderFormData,
-                          deliveryAddress: { ...orderFormData.deliveryAddress, floor: e.target.value }
-                        })}
-                        placeholder="e.g., 3"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Address Notes</label>
-                      <input
-                        type="text"
-                        value={orderFormData.deliveryAddress.notes || ''}
-                        onChange={(e) => setOrderFormData({
-                          ...orderFormData,
-                          deliveryAddress: { ...orderFormData.deliveryAddress, notes: e.target.value }
-                        })}
-                        placeholder="e.g., Near window"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Special Instructions</label>
-                    <textarea
-                      value={orderFormData.specialInstructions || ''}
-                      onChange={(e) => setOrderFormData({
-                        ...orderFormData,
-                        specialInstructions: e.target.value
-                      })}
-                      placeholder="e.g., No onions, less spicy, extra sauce..."
-                      rows="2"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    />
-                  </div>
-
-                  {orderMessage && (
-                    <div className={`p-3 rounded-lg text-sm font-semibold ${
-                      orderMessage.includes('✓') || orderMessage.includes('successfully')
-                        ? 'bg-green-100 text-green-800 border border-green-300'
-                        : 'bg-red-100 text-red-800 border border-red-300'
-                    }`}>
-                      {orderMessage}
-                    </div>
-                  )}
-
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowCustomOrderModal(false)
-                        setCustomOrderItems([])
-                        setOrderFormData({ specialInstructions: '', deliveryAddress: { roomNumber: '', floor: '', notes: '' } })
-                        setOrderMessage('')
-                      }}
-                      className="flex-1 bg-gray-300 text-gray-800 py-3 rounded-lg font-semibold hover:bg-gray-400 transition"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={orderSubmitLoading}
-                      className="flex-1 bg-gradient-to-r from-green-600 to-green-700 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {orderSubmitLoading ? '⏳ Processing...' : '✓ Place Order & Pay'}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Feedback Modal */}
-      {showFeedbackModal && selectedOrderForFeedback && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full">
-            <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 flex items-center justify-between">
-              <h3 className="text-xl font-bold">⭐ Rate Your Order</h3>
-              <button
-                onClick={() => {
-                  setShowFeedbackModal(false)
-                  setSelectedOrderForFeedback(null)
-                  setFeedbackFormData({ rating: 5, comment: '' })
-                }}
-                className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition"
-              >
-                ×
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmitFeedback} className="p-6 space-y-4">
-              <div>
-                <p className="text-sm font-semibold text-text-muted mb-1">Order Details</p>
-                <p className="font-bold text-text-dark">{selectedOrderForFeedback.canteen?.name}</p>
-                <p className="text-sm text-text-muted">Order #{selectedOrderForFeedback.orderNumber}</p>
-                <p className="text-sm text-text-muted">Items: {selectedOrderForFeedback.items.map(i => `${i.name} x${i.quantity}`).join(', ')}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-text-dark mb-3">Rating</label>
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map(star => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setFeedbackFormData({ ...feedbackFormData, rating: star })}
-                      className={`text-3xl transition transform hover:scale-110 ${
-                        star <= feedbackFormData.rating ? 'text-yellow-400' : 'text-gray-300'
-                      }`}
-                    >
-                      ⭐
-                    </button>
-                  ))}
-                </div>
-                <p className="text-sm text-text-muted mt-2">{feedbackFormData.rating} out of 5 stars</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-text-dark mb-2">Your Feedback (Optional)</label>
-                <textarea
-                  value={feedbackFormData.comment}
-                  onChange={(e) => setFeedbackFormData({ ...feedbackFormData, comment: e.target.value })}
-                  placeholder="Tell us what you think about the order, food quality, delivery, etc..."
-                  rows="4"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                />
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowFeedbackModal(false)
-                    setSelectedOrderForFeedback(null)
-                    setFeedbackFormData({ rating: 5, comment: '' })
-                  }}
-                  className="flex-1 bg-gray-300 text-gray-800 py-2 rounded-lg font-semibold hover:bg-gray-400 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={feedbackLoading}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-2 rounded-lg font-semibold hover:shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {feedbackLoading ? '⏳ Submitting...' : '✓ Submit Feedback'}
-                </button>
-              </div>
-            </form>
+            <p className="text-xs text-gray-500 text-center mt-4">
+              🔒 Secure payment via Razorpay | You can cancel anytime
+            </p>
           </div>
         </div>
       )}
