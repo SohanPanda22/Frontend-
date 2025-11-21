@@ -126,6 +126,13 @@ export default function CanteenDashboard() {
     contactEmail: ''
   })
 
+  // Toast notification state
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' })
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type })
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000)
+  }
+
   useEffect(() => {
     fetchCanteens()
     fetchHostels()
@@ -286,16 +293,16 @@ export default function CanteenDashboard() {
       // Refresh orders
       await fetchOrders()
       const statusMessages = {
-        confirmed: '✓ Order confirmed!',
-        preparing: '👨‍🍳 Preparing order...',
-        ready: '✓ Order is ready for delivery!',
-        delivered: '🎉 Order delivered successfully!',
-        cancelled: '✕ Order cancelled'
+        confirmed: 'Order confirmed!',
+        preparing: 'Preparing order...',
+        ready: 'Order is ready for delivery!',
+        delivered: 'Order delivered successfully!',
+        cancelled: 'Order cancelled'
       }
-      alert(statusMessages[newStatus] || `Order status updated to: ${newStatus}`)
+      showToast(statusMessages[newStatus] || `Order status updated to: ${newStatus}`, 'success')
     } catch (error) {
       console.error('Error updating order status:', error)
-      alert('Failed to update order status: ' + (error.response?.data?.message || error.message))
+      showToast('Failed to update order status: ' + (error.response?.data?.message || error.message), 'error')
     }
   }
 
@@ -314,7 +321,7 @@ export default function CanteenDashboard() {
 
   const submitTenantRating = async () => {
     if (!selectedOrderForRating || tenantRating === 0) {
-      alert('Please select a rating')
+      showToast('Please select a rating', 'error')
       return
     }
 
@@ -325,7 +332,7 @@ export default function CanteenDashboard() {
         comment: tenantRatingComment.trim()
       })
       
-      alert('✓ Tenant rated successfully!')
+      showToast('Tenant rated successfully!', 'success')
       setShowTenantRatingModal(false)
       setSelectedOrderForRating(null)
       setTenantRating(0)
@@ -333,7 +340,7 @@ export default function CanteenDashboard() {
       await fetchOrders() // Refresh orders to show the rating
     } catch (error) {
       console.error('Error rating tenant:', error)
-      alert(error.response?.data?.message || 'Failed to rate tenant')
+      showToast(error.response?.data?.message || 'Failed to rate tenant', 'error')
     } finally {
       setTenantRatingLoading(false)
     }
@@ -351,7 +358,7 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to update subscription plans')
+      showToast(error.response?.data?.message || 'Failed to update subscription plans', 'error')
     } finally {
       setLoading(false)
     }
@@ -360,7 +367,7 @@ export default function CanteenDashboard() {
   const handleAddMenuItem = async (e) => {
     e.preventDefault()
     if (!selectedCanteen) {
-      alert('Please select a canteen first')
+      showToast('Please select a canteen first', 'error')
       return
     }
     try {
@@ -388,7 +395,7 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to add menu item')
+      showToast(error.response?.data?.message || 'Failed to add menu item', 'error')
     } finally {
       setLoading(false)
     }
@@ -423,7 +430,7 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to update menu item')
+      showToast(error.response?.data?.message || 'Failed to update menu item', 'error')
     } finally {
       setLoading(false)
     }
@@ -441,7 +448,7 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to delete menu item')
+      showToast(error.response?.data?.message || 'Failed to delete menu item', 'error')
     } finally {
       setLoading(false)
     }
@@ -466,7 +473,7 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to delete canteen')
+      showToast(error.response?.data?.message || 'Failed to delete canteen', 'error')
     } finally {
       setLoading(false)
     }
@@ -548,7 +555,7 @@ export default function CanteenDashboard() {
   const handleCreateCanteen = async (e) => {
     e.preventDefault()
     if (!canteenFormData.hostel) {
-      alert('Please select a primary hostel')
+      showToast('Please select a primary hostel', 'error')
       return
     }
     try {
@@ -574,7 +581,7 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to create canteen')
+      showToast(error.response?.data?.message || 'Failed to create canteen', 'error')
     } finally {
       setLoading(false)
     }
@@ -2613,7 +2620,7 @@ export default function CanteenDashboard() {
                   <div className="flex justify-end gap-3">
                     <button
                       onClick={() => {
-                        alert('Settings saved successfully!')
+                        showToast('Settings saved successfully!', 'success')
                         // Implement save API call here
                       }}
                       className="btn-primary px-8"
@@ -3186,6 +3193,28 @@ export default function CanteenDashboard() {
                 ✓ Confirm Order
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className="fixed top-4 right-4 z-50 animate-slide-in">
+          <div className={`px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 min-w-[300px] ${
+            toast.type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
+            toast.type === 'error' ? 'bg-gradient-to-r from-red-500 to-rose-600' :
+            'bg-gradient-to-r from-blue-500 to-indigo-600'
+          } text-white`}>
+            <span className="text-2xl">
+              {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : 'ℹ'}
+            </span>
+            <p className="font-medium flex-1">{toast.message}</p>
+            <button
+              onClick={() => setToast({ show: false, message: '', type: 'success' })}
+              className="text-white/80 hover:text-white text-xl leading-none"
+            >
+              ×
+            </button>
           </div>
         </div>
       )}

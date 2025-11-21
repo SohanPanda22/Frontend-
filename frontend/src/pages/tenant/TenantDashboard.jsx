@@ -132,10 +132,25 @@ export default function TenantDashboard() {
   const [hostelRatingLoading, setHostelRatingLoading] = useState(false)
   const [myHostelFeedbacks, setMyHostelFeedbacks] = useState([])
   const [hostelFeedbacksLoading, setHostelFeedbacksLoading] = useState(false)
+  const [feedbackUpdateTrigger, setFeedbackUpdateTrigger] = useState(0)
+
+  // Toast notification state
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' })
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type })
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000)
+  }
 
   // Video modal state
   const [showVideoModal, setShowVideoModal] = useState(false)
   const [currentVideoUrl, setCurrentVideoUrl] = useState('')
+
+  // Fetch feedbacks when feedback tab is opened
+  useEffect(() => {
+    if (activeTab === 'feedback') {
+      fetchHostelFeedbacks()
+    }
+  }, [activeTab])
 
   useEffect(() => {
     // Check if user has any active contracts/bookings
@@ -983,7 +998,7 @@ export default function TenantDashboard() {
 
             if (verifyResponse.data?.success) {
               setSubscriptionLoading(false)
-              alert('✓ Subscription activated successfully! You will receive meals starting tomorrow.')
+              showToast('Subscription activated successfully! You will receive meals starting tomorrow.', 'success')
               setShowSubscriptionModal(false)
               setSelectedPlan(null)
               setSelectedFoodType('pure_veg')
@@ -995,7 +1010,7 @@ export default function TenantDashboard() {
             console.error('Payment verification error:', error)
             setSubscriptionLoading(false)
             const errorMsg = error.response?.data?.message || error.message || 'Unknown error'
-            alert('❌ Payment verification failed:\n\n' + errorMsg + '\n\nPlease contact support if the issue persists.')
+            showToast('Payment verification failed: ' + errorMsg + '. Please contact support if the issue persists.', 'error')
           }
         },
         modal: {
@@ -1007,7 +1022,7 @@ export default function TenantDashboard() {
         onerror: (error) => {
           console.error('Razorpay error:', error)
           setSubscriptionLoading(false)
-          alert('Payment failed: ' + (error.description || 'Unknown error occurred'))
+          showToast('Payment failed: ' + (error.description || 'Unknown error occurred'), 'error')
         }
       }
 
@@ -1016,18 +1031,18 @@ export default function TenantDashboard() {
         rzp.on('payment.failed', (response) => {
           console.error('Payment failed:', response)
           setSubscriptionLoading(false)
-          alert('Payment failed: ' + response.error.description)
+          showToast('Payment failed: ' + response.error.description, 'error')
         })
         rzp.open()
       } catch (error) {
         console.error('Error opening Razorpay:', error)
         setSubscriptionLoading(false)
-        alert('Error opening payment gateway: ' + error.message)
+        showToast('Error opening payment gateway: ' + error.message, 'error')
       }
     } catch (error) {
       console.error('Error in subscription purchase:', error)
       setSubscriptionLoading(false)
-      alert('Failed to process subscription: ' + (error.response?.data?.message || error.message))
+      showToast('Failed to process subscription: ' + (error.response?.data?.message || error.message), 'error')
     }
   }
 
@@ -1131,7 +1146,7 @@ export default function TenantDashboard() {
 
             if (verifyResponse.data?.success) {
               setOrderLoading(false)
-              alert('✓ Order placed successfully! Your food will be delivered soon.')
+              showToast('Order placed successfully! Your food will be delivered soon.', 'success')
               setCart([])
               setShowCartModal(false)
               await fetchMyOrders()
@@ -1141,7 +1156,7 @@ export default function TenantDashboard() {
           } catch (error) {
             console.error('Payment verification error:', error)
             setOrderLoading(false)
-            alert('❌ Payment verification failed:\n\n' + (error.response?.data?.message || error.message))
+            showToast('Payment verification failed: ' + (error.response?.data?.message || error.message), 'error')
           }
         },
         modal: {
@@ -1163,13 +1178,13 @@ export default function TenantDashboard() {
       rzp.on('payment.failed', (response) => {
         console.error('Payment failed:', response)
         setOrderLoading(false)
-        alert('Payment failed: ' + response.error.description)
+        showToast('Payment failed: ' + response.error.description, 'error')
       })
       rzp.open()
     } catch (error) {
       console.error('Error placing order:', error)
       setOrderLoading(false)
-      alert('Failed to place order: ' + (error.response?.data?.message || error.message))
+      showToast('Failed to place order: ' + (error.response?.data?.message || error.message), 'error')
     }
   }
 
@@ -1219,31 +1234,37 @@ export default function TenantDashboard() {
     try {
       setHostelFeedbacksLoading(true)
       const response = await tenantAPI.getMyFeedbacks()
-      console.log('Fetched feedbacks:', response.data?.data)
-      setMyHostelFeedbacks(response.data?.data || [])
+      console.log('Fetched feedbacks response:', response.data)
+      const feedbacks = response.data?.data || []
+      console.log('Setting feedbacks:', feedbacks)
+      setMyHostelFeedbacks(feedbacks)
+      console.log('Feedbacks state updated')
+      // Force a re-render by updating a dummy state
+      setHostelFeedbacksLoading(false)
+      return feedbacks
     } catch (error) {
       console.error('Error fetching hostel feedbacks:', error)
-    } finally {
       setHostelFeedbacksLoading(false)
+      return []
     }
   }
 
   // Submit hostel rating
   const submitHostelRating = async () => {
     if (hostelRating === 0) {
-      alert('Please provide a rating')
+      showToast('Please provide a rating', 'error')
       return
     }
 
     if (!hostelReview.trim()) {
-      alert('Please write a review')
+      showToast('Please write a review', 'error')
       return
     }
 
     // Find active contract to get hostel ID
     const activeContract = myContracts.find(c => c.status === 'active')
     if (!activeContract || !activeContract.hostel) {
-      alert('You need to have an active contract to rate a hostel')
+      showToast('You need to have an active contract to rate a hostel', 'error')
       return
     }
 
@@ -1264,16 +1285,26 @@ export default function TenantDashboard() {
       
       console.log('Submit feedback response:', response.data)
 
-      alert(existingRating ? '✓ Rating updated successfully!' : '✓ Hostel rating submitted successfully!')
+      // Wait a moment to ensure backend has saved
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      // Refresh feedbacks to get the updated data
+      console.log('Fetching updated feedbacks...')
+      const updatedFeedbacks = await fetchHostelFeedbacks()
+      console.log('Updated feedbacks received:', updatedFeedbacks)
+      
+      // Force re-render
+      setFeedbackUpdateTrigger(prev => prev + 1)
+      
+      // Close modal after data is refreshed
       setShowHostelRatingModal(false)
       setHostelRating(0)
       setHostelReview('')
       
-      // Refresh feedbacks
-      await fetchHostelFeedbacks()
+      showToast(existingRating ? 'Rating updated successfully!' : 'Hostel rating submitted successfully!', 'success')
     } catch (error) {
       console.error('Error submitting hostel rating:', error)
-      alert('Failed to submit rating: ' + (error.response?.data?.message || error.message))
+      showToast('Failed to submit rating: ' + (error.response?.data?.message || error.message), 'error')
     } finally {
       setHostelRatingLoading(false)
     }
@@ -3106,7 +3137,7 @@ export default function TenantDashboard() {
                       
                       if (existingRating) {
                         return (
-                          <div key={existingRating._id} className="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg p-5 border-2 border-yellow-200">
+                          <div key={`${existingRating._id}-${existingRating.updatedAt || existingRating.createdAt}`} className="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg p-5 border-2 border-yellow-200">
                             <div className="flex items-start justify-between mb-3">
                               <div className="flex items-center gap-3">
                                 <span className="text-3xl">⭐</span>
@@ -3135,16 +3166,33 @@ export default function TenantDashboard() {
                                 ✏️ Edit
                               </button>
                             </div>
-                            <div className="bg-white rounded-lg p-3 mt-3">
-                              <p className="text-sm text-gray-700 italic">"{existingRating.comment}"</p>
+                            <div className="bg-white rounded-lg p-4 mt-3 border-l-4 border-blue-500">
+                              <p className="text-xs text-gray-500 font-semibold mb-2">YOUR REVIEW:</p>
+                              <p className="text-sm text-gray-700 leading-relaxed">"{existingRating.comment}"</p>
                             </div>
-                            <p className="text-xs text-gray-600 mt-3">
-                              📅 {existingRating.updatedAt ? 'Last updated' : 'Submitted'} on {new Date(existingRating.updatedAt || existingRating.createdAt).toLocaleDateString('en-IN', {
-                                day: 'numeric',
-                                month: 'long',
-                                year: 'numeric'
-                              })}
-                            </p>
+                            <div className="flex items-center justify-between mt-3">
+                              <p className="text-xs text-gray-600">
+                                📅 {existingRating.updatedAt && existingRating.updatedAt !== existingRating.createdAt ? (
+                                  <span className="text-blue-600 font-semibold">
+                                    Last updated on {new Date(existingRating.updatedAt).toLocaleDateString('en-IN', {
+                                      day: 'numeric',
+                                      month: 'long',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                ) : (
+                                  <span>
+                                    Submitted on {new Date(existingRating.createdAt).toLocaleDateString('en-IN', {
+                                      day: 'numeric',
+                                      month: 'long',
+                                      year: 'numeric'
+                                    })}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
                           </div>
                         )
                       } else {
@@ -5413,6 +5461,30 @@ export default function TenantDashboard() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className="fixed top-4 right-4 z-[9999] animate-slide-in">
+          <div className={`flex items-center gap-3 px-6 py-4 rounded-xl shadow-2xl border-2 ${
+            toast.type === 'success' 
+              ? 'bg-gradient-to-r from-green-500 to-emerald-500 border-green-300 text-white' 
+              : toast.type === 'error'
+              ? 'bg-gradient-to-r from-red-500 to-rose-500 border-red-300 text-white'
+              : 'bg-gradient-to-r from-blue-500 to-indigo-500 border-blue-300 text-white'
+          }`}>
+            <div className="text-2xl">
+              {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : 'ℹ'}
+            </div>
+            <div className="font-semibold">{toast.message}</div>
+            <button
+              onClick={() => setToast({ show: false, message: '', type: 'success' })}
+              className="ml-2 text-white/80 hover:text-white transition"
+            >
+              ✕
+            </button>
           </div>
         </div>
       )}
