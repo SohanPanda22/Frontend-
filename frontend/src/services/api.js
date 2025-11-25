@@ -209,16 +209,23 @@ export const ownerAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
-  uploadRoomMedia: (roomId, files, mediaType = 'photos') => {
-    const form = new FormData()
-    if (mediaType === 'photos') {
-      for (const f of files) form.append('photos', f)
-    } else if (mediaType === 'video') {
-      form.append('video', files[0])
-    } else if (mediaType === 'view360') {
-      form.append('view360', files[0])
-    } else if (mediaType === 'panorama') {
-      form.append('panorama', files[0])
+  uploadRoomMedia: (roomId, formDataOrFiles, mediaType = 'photos') => {
+    // If formDataOrFiles is already a FormData instance, use it directly
+    let form
+    if (formDataOrFiles instanceof FormData) {
+      form = formDataOrFiles
+    } else {
+      // Otherwise, create FormData from files
+      form = new FormData()
+      if (mediaType === 'photos') {
+        for (const f of formDataOrFiles) form.append('photos', f)
+      } else if (mediaType === 'video') {
+        form.append('video', formDataOrFiles[0])
+      } else if (mediaType === 'view360') {
+        form.append('view360', formDataOrFiles[0])
+      } else if (mediaType === 'panorama') {
+        form.append('panorama', formDataOrFiles[0])
+      }
     }
     return api.post(`/owner/rooms/${roomId}/upload`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },

@@ -421,9 +421,16 @@ const uploadRoomMedia = async (req, res) => {
       room.view360Url = view360Result;
     }
 
-    // Handle panorama upload - send to Python service then upload to Cloudinary
+    // Handle panorama upload - upload directly to Cloudinary
+    console.log('Checking for panorama upload...');
+    console.log('files.panorama:', files.panorama);
+    console.log('Has panorama:', !!(files.panorama && files.panorama[0]));
+    
     if (files.panorama && files.panorama[0]) {
       try {
+        console.log('Starting panorama upload to Cloudinary...');
+        console.log('Panorama file:', files.panorama[0].originalname, files.panorama[0].size, 'bytes');
+        
         // Delete old panorama from Cloudinary if exists
         if (room.panorama?.publicId) {
           try {
@@ -434,55 +441,54 @@ const uploadRoomMedia = async (req, res) => {
           }
         }
         
-        const formData = new FormData();
-        formData.append('file', files.panorama[0].buffer, files.panorama[0].originalname);
-        formData.append('width', '4096'); // High quality for Three.js
-        
-        const panoramaResponse = await axios.post(
-          `${PANORAMA_SERVICE_URL}/stitch-base64`,
-          formData,
-          {
-            headers: formData.getHeaders(),
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity,
-            timeout: 60000, // 60 second timeout
-          }
-        );
-
-        if (panoramaResponse.data.success && panoramaResponse.data.imageBase64) {
-          // Upload base64 image to Cloudinary
-          const cloudinaryResult = await cloudinary.uploader.upload(
-            `data:image/jpeg;base64,${panoramaResponse.data.imageBase64}`,
-            {
-              resource_type: 'image',
+        // Upload panorama directly to Cloudinary
+        console.log('Uploading to Cloudinary...');
+        const cloudinaryResult = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { 
+              resource_type: 'image', 
               folder: 'safestay/rooms/panoramas',
               transformation: [
                 { quality: 'auto:good' },
                 { fetch_format: 'auto' }
               ]
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
             }
           );
+          stream.end(files.panorama[0].buffer);
+        });
 
-          room.panorama = {
-            url: cloudinaryResult.secure_url,
-            publicId: cloudinaryResult.public_id,
-            originalFilename: files.panorama[0].originalname,
-            uploadedAt: new Date(),
-            dimensions: {
-              width: panoramaResponse.data.width,
-              height: panoramaResponse.data.height
-            }
-          };
-          
-          console.log('Panorama uploaded to Cloudinary:', cloudinaryResult.public_id);
-        }
+        // Get image dimensions from Cloudinary result
+        room.panorama = {
+          url: cloudinaryResult.secure_url,
+          publicId: cloudinaryResult.public_id,
+          originalFilename: files.panorama[0].originalname,
+          uploadedAt: new Date(),
+          dimensions: {
+            width: cloudinaryResult.width || 4096,
+            height: cloudinaryResult.height || 2048
+          }
+        };
+        
+        console.log('Panorama set on room object:', room.panorama);
+        console.log('Panorama uploaded to Cloudinary:', cloudinaryResult.public_id);
       } catch (panoramaError) {
         console.error('Panorama upload error:', panoramaError.message);
+        console.error('Full error:', panoramaError);
         // Continue without panorama if it fails
       }
+    } else {
+      console.log('No panorama file found in request');
     }
     
+    console.log('Saving room...');
+    console.log('Room before save - has panorama:', !!room.panorama);
     await room.save();
+    console.log('Room saved successfully');
+    console.log('Room after save - panorama:', room.panorama);
     
     res.json({ success: true, data: room, message: 'Media uploaded successfully' });
   } catch (error) {

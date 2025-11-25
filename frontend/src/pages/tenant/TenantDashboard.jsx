@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { LogOut, Menu, X } from 'lucide-react'
 import api, { tenantAPI, canteenAPI, contractAPI } from '../../services/api'
+import PanoramaViewer from '../../components/PanoramaViewer'
 
 export default function TenantDashboard() {
   const navigate = useNavigate()
@@ -39,6 +40,10 @@ export default function TenantDashboard() {
   const [bookingLoading, setBookingLoading] = useState(false)
   const [bookingMessage, setBookingMessage] = useState('')
   const [myBooking, setMyBooking] = useState(null)
+  
+  // Panorama preview state
+  const [showPanoramaPreview, setShowPanoramaPreview] = useState(false)
+  const [panoramaPreviewUrl, setPanoramaPreviewUrl] = useState(null)
   
   // Canteen state
   const [availableCanteens, setAvailableCanteens] = useState([])
@@ -2191,6 +2196,22 @@ export default function TenantDashboard() {
                                 </div>
                               )}
 
+                              {/* View 3D Panorama Button */}
+                              {room.panorama?.url && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setPanoramaPreviewUrl(room.panorama.url)
+                                    setShowPanoramaPreview(true)
+                                  }}
+                                  className="w-full mb-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white py-2 rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 transition text-sm flex items-center justify-center gap-2"
+                                >
+                                  <span>🎯</span>
+                                  <span>View 360° Room Tour</span>
+                                </button>
+                              )}
+                              
                               {/* Book Button */}
                               {room.isAvailable && (
                                 <button
@@ -5412,6 +5433,62 @@ export default function TenantDashboard() {
                   {sendingDeletionRequest ? 'Sending Request...' : 'Send Request'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Panorama Preview Modal */}
+      {showPanoramaPreview && panoramaPreviewUrl && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50">
+          <div className="w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col bg-white rounded-lg overflow-hidden m-4">
+            {/* Modal Header */}
+            <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-purple-600 to-purple-700 flex-shrink-0">
+              <div>
+                <h3 className="text-xl font-semibold text-white">🎯 360° Virtual Room Tour</h3>
+                <p className="text-purple-100 text-xs mt-1">Drag to look around • Scroll to zoom</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPanoramaPreview(false)
+                  setPanoramaPreviewUrl(null)
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Viewer Container - Takes remaining space */}
+            <div className="flex-1 bg-gray-900 overflow-hidden">
+              <PanoramaViewer 
+                panoramaUrl={panoramaPreviewUrl}
+                width="100%"
+                height="100%"
+                autoRotate={true}
+                showControls={true}
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t bg-gray-50 flex justify-between items-center flex-shrink-0">
+              <div className="text-xs text-gray-600">
+                <p className="font-medium mb-1">💡 Controls:</p>
+                <p>🖱️ Click & drag to look around • 🔍 Scroll to zoom in/out • 🔁 Auto-rotate enabled</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPanoramaPreview(false)
+                  setPanoramaPreviewUrl(null)
+                }}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-semibold text-sm"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

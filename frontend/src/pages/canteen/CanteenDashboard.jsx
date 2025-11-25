@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { LogOut, Menu, X } from 'lucide-react'
 import { canteenAPI } from '../../services/api'
+import LocationPicker from '../../components/LocationPicker'
 
 export default function CanteenDashboard() {
   const navigate = useNavigate()
@@ -34,12 +35,14 @@ export default function CanteenDashboard() {
     servingHostels: [],
     address: '',
     cuisineTypes: [],
-    deliveryCharge: '10'
+    deliveryCharge: '10',
+    location: null
   })
   const [selectedCity, setSelectedCity] = useState('')
   const [hostelsByCity, setHostelsByCity] = useState({})
   const [subscriptions, setSubscriptions] = useState([])
   const [showSubscriptionModal, setShowSubscriptionModal] = useState(false)
+  const [showLocationPicker, setShowLocationPicker] = useState(false)
   const [subscriptionPlans, setSubscriptionPlans] = useState({
     breakfast: { 
       enabled: false, 
@@ -340,10 +343,18 @@ export default function CanteenDashboard() {
   }
 
   const handleUpdateSubscriptionPlans = async () => {
-    if (!selectedCanteen) return
+    if (!selectedCanteen) {
+      alert('Please select a canteen first')
+      return
+    }
     try {
       setLoading(true)
-      await canteenAPI.updateSubscriptionPlans(selectedCanteen._id, { subscriptionPlans })
+      console.log('Updating subscription plans for canteen:', selectedCanteen._id)
+      console.log('Subscription plans data:', subscriptionPlans)
+      
+      const response = await canteenAPI.updateSubscriptionPlans(selectedCanteen._id, { subscriptionPlans })
+      console.log('Update response:', response)
+      
       await fetchCanteens()
       const successDiv = document.createElement('div')
       successDiv.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-4 rounded-lg shadow-lg z-50 flex items-center gap-3'
@@ -351,7 +362,9 @@ export default function CanteenDashboard() {
       document.body.appendChild(successDiv)
       setTimeout(() => successDiv.remove(), 3000)
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to update subscription plans')
+      console.error('Error updating subscription plans:', error)
+      console.error('Error response:', error.response)
+      alert(error.response?.data?.message || error.message || 'Failed to update subscription plans')
     } finally {
       setLoading(false)
     }
@@ -522,7 +535,8 @@ export default function CanteenDashboard() {
       servingHostels: [],
       address: '',
       cuisineTypes: [],
-      deliveryCharge: '10'
+      deliveryCharge: '10',
+      location: null
     })
     setSelectedCity('')
   }
@@ -554,7 +568,7 @@ export default function CanteenDashboard() {
     try {
       setLoading(true)
       
-      await canteenAPI.createCanteen({
+      const payload = {
         name: canteenFormData.name,
         description: canteenFormData.description,
         hostel: canteenFormData.hostel,
@@ -562,7 +576,17 @@ export default function CanteenDashboard() {
         address: canteenFormData.address,
         cuisineTypes: canteenFormData.cuisineTypes,
         deliveryCharge: Number(canteenFormData.deliveryCharge)
-      })
+      }
+
+      // Add location if selected
+      if (canteenFormData.location) {
+        payload.location = {
+          type: 'Point',
+          coordinates: [canteenFormData.location.longitude, canteenFormData.location.latitude]
+        }
+      }
+
+      await canteenAPI.createCanteen(payload)
       
       setShowCanteenModal(false)
       resetCanteenForm()
@@ -2841,6 +2865,29 @@ export default function CanteenDashboard() {
                 />
               </div>
 
+              {/* Location Picker Button */}
+              <div className="border-2 border-gray-300 rounded-lg p-4 bg-gray-50">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold text-gray-700">Canteen Location on Map</h4>
+                  {canteenFormData.location && (
+                    <span className="text-sm text-green-600 font-semibold">✓ Location Set</span>
+                  )}
+                </div>
+                {canteenFormData.location && (
+                  <p className="text-xs text-gray-600 mb-3">
+                    Coordinates: {canteenFormData.location.latitude.toFixed(6)}, {canteenFormData.location.longitude.toFixed(6)}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowLocationPicker(true)}
+                  className="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition font-semibold flex items-center justify-center gap-2"
+                >
+                  <span>📍</span>
+                  {canteenFormData.location ? 'Change Location' : 'Select Location on Map'}
+                </button>
+              </div>
+
               <div>
                 <label className="block text-sm font-semibold text-text-dark mb-2">Filter by City</label>
                 <select
@@ -3188,6 +3235,22 @@ export default function CanteenDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Location Picker Modal */}
+      {showLocationPicker && (
+        <LocationPicker
+          initialLocation={canteenFormData.location}
+          onLocationSelect={(location) => {
+            console.log('Location selected:', location)
+            setCanteenFormData(prev => ({
+              ...prev,
+              location
+            }))
+            setShowLocationPicker(false)
+          }}
+          onClose={() => setShowLocationPicker(false)}
+        />
       )}
     </div>
   )

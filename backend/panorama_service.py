@@ -298,18 +298,20 @@ def stitch_panorama():
             front, back, left, right, top, bottom, output_width
         )
         
-        # Convert image to bytes buffer
-        img_buffer = io.BytesIO()
-        equirect_image.save(img_buffer, 'JPEG', quality=95, optimize=True)
-        img_buffer.seek(0)
+        # Generate unique filename and save
+        output_filename = f"{uuid.uuid4()}.jpg"
+        output_path = os.path.join(OUTPUT_FOLDER, output_filename)
         
-        # Return the image data directly
+        # Save with high quality
+        equirect_image.save(output_path, 'JPEG', quality=95, optimize=True)
+        
         return jsonify({
             'success': True,
+            'filename': output_filename,
+            'url': f'/panorama/{output_filename}',
             'width': equirect_image.width,
             'height': equirect_image.height,
-            'message': 'Successfully stitched 6 photos into panorama',
-            'imageData': 'binary'  # Placeholder - actual binary will be handled differently
+            'message': 'Successfully stitched 6 photos into panorama'
         }), 200
         
     except Exception as e:

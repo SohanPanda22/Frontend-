@@ -1006,32 +1006,56 @@ export default function OwnerDashboard() {
                               </button>
                             </div>
                             
-                            {/* View 360° Panorama Button - Show if panorama exists */}
-                            {(room.panorama && room.panorama.url) ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
+                            {/* Debug button to see full room data */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                console.log('=== FULL ROOM DATA ===')
+                                console.log(JSON.stringify(room, null, 2))
+                                console.log('===================')
+                              }}
+                              className="w-full mb-2 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-xs"
+                            >
+                              🔍 Debug Room Data
+                            </button>
+                            
+                            {/* View 360° Cubemap Button - Always show */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                console.log('Button clicked for room:', room.roomNumber)
+                                console.log('Room panorama data:', room.panorama)
+                                console.log('Has URL:', !!room.panorama?.url)
+                                
+                                if (room.panorama && room.panorama.url) {
                                   console.log('Opening panorama for room:', room.roomNumber)
                                   console.log('Panorama URL:', room.panorama.url)
+                                  console.log('Setting panorama preview...')
                                   setPanoramaPreview({
                                     file: null,
                                     url: room.panorama.url
                                   })
+                                  console.log('Setting show preview to true...')
                                   setShowPanoramaPreview(true)
-                                }}
-                                className="w-full bg-gradient-to-r from-purple-500 to-purple-600 text-white py-2.5 rounded-lg hover:from-purple-600 hover:to-purple-700 transition text-sm font-semibold flex items-center justify-center gap-2 shadow-md"
-                              >
-                                <span className="text-lg">🎯</span>
-                                <span>View 360° Panorama</span>
-                              </button>
-                            ) : (
-                              <div className="w-full bg-gray-100 text-gray-500 py-2 rounded-lg text-xs text-center italic">
-                                <div>No 360° panorama - Room ID: {room._id}</div>
-                                <div className="mt-1 text-[10px]">Panorama: {JSON.stringify(room.panorama)}</div>
-                              </div>
-                            )}
+                                  console.log('Modal should now be visible')
+                                } else {
+                                  console.log('No panorama URL found')
+                                  alert(`No 3D cubemap available for Room ${room.roomNumber}.\n\nPlease upload a cubemap in the Edit Room section.`)
+                                }
+                              }}
+                              className={`w-full py-2.5 rounded-lg transition text-sm font-semibold flex items-center justify-center gap-2 shadow-md ${
+                                room.panorama?.url 
+                                  ? 'bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 cursor-pointer' 
+                                  : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                              }`}
+                            >
+                              <span className="text-lg">🎯</span>
+                              <span>View 3D Cubemap</span>
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -2335,15 +2359,33 @@ export default function OwnerDashboard() {
                 }
                 
                 // Upload panorama if selected
+                console.log('Checking panorama upload...')
+                console.log('uploadedEditPanorama:', uploadedEditPanorama)
+                console.log('Has file:', !!uploadedEditPanorama?.file)
+                
                 if (uploadedEditPanorama && uploadedEditPanorama.file) {
                   try {
                     console.log('Uploading panorama to room:', editingRoom._id)
-                    await ownerAPI.uploadRoomMedia(editingRoom._id, [uploadedEditPanorama.file], 'panorama')
+                    console.log('Panorama file:', uploadedEditPanorama.file)
+                    console.log('File size:', uploadedEditPanorama.file.size)
+                    console.log('File type:', uploadedEditPanorama.file.type)
+                    
+                    const formData = new FormData()
+                    formData.append('panorama', uploadedEditPanorama.file)
+                    
+                    const uploadResponse = await ownerAPI.uploadRoomMedia(editingRoom._id, formData)
+                    console.log('Panorama upload response:', uploadResponse)
+                    console.log('Response data:', uploadResponse.data)
+                    console.log('Updated room:', uploadResponse.data?.data)
+                    console.log('Room panorama field:', uploadResponse.data?.data?.panorama)
                     console.log('Panorama uploaded successfully')
                   } catch (panoramaErr) {
                     console.error('Panorama upload failed:', panoramaErr)
+                    console.error('Error details:', panoramaErr.response?.data)
                     throw panoramaErr
                   }
+                } else {
+                  console.log('No panorama to upload')
                 }
                 
                 // Refresh rooms list
@@ -3332,6 +3374,10 @@ export default function OwnerDashboard() {
     )}
 
     {/* Panorama Preview Modal */}
+    {(() => {
+      console.log('Modal render check:', { showPanoramaPreview, panoramaPreview })
+      return null
+    })()}
     {showPanoramaPreview && panoramaPreview && (
       <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">

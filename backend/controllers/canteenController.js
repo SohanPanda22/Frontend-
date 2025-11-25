@@ -594,14 +594,24 @@ const getMyOrders = async (req, res) => {
 // @access  Private/CanteenProvider
 const updateSubscriptionPlans = async (req, res) => {
   try {
+    console.log('📋 Updating subscription plans...');
+    console.log('Canteen ID:', req.params.id);
+    console.log('User ID:', req.user?.id);
+    console.log('Subscription plans received:', JSON.stringify(req.body.subscriptionPlans, null, 2));
+
     const canteen = await Canteen.findById(req.params.id);
 
     if (!canteen) {
+      console.log('❌ Canteen not found');
       return res.status(404).json({ success: false, message: 'Canteen not found' });
     }
 
+    console.log('Canteen found:', canteen.name);
+    console.log('Canteen provider:', canteen.provider.toString());
+
     if (canteen.provider.toString() !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'Not authorized' });
+      console.log('❌ Not authorized - User is not the provider');
+      return res.status(403).json({ success: false, message: 'Not authorized to update this canteen' });
     }
 
     // Use findByIdAndUpdate to avoid full model validation
@@ -615,7 +625,8 @@ const updateSubscriptionPlans = async (req, res) => {
 
     res.json({ success: true, data: updatedCanteen });
   } catch (error) {
-    console.error('Error updating subscription plans:', error);
+    console.error('❌ Error updating subscription plans:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ success: false, message: error.message });
   }
 };

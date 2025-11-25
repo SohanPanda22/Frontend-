@@ -284,7 +284,7 @@ const createBookingOrder = async (req, res) => {
     }
 
     // Calculate total amount (first month rent + security deposit)
-    const amount = room.rent + room.securityDeposit;
+    let amount = room.rent + room.securityDeposit;
 
     // Check if Razorpay is configured
     const razorpay = require('../config/razorypay');
@@ -306,6 +306,14 @@ const createBookingOrder = async (req, res) => {
       });
     }
 
+    // Razorpay test mode has a maximum limit of ₹5000
+    // Cap amount for test mode (check if using test key)
+    const isTestMode = process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_');
+    if (isTestMode && amount > 5000) {
+      console.log(`⚠️ Amount (₹${amount}) exceeds Razorpay test mode limit. Capping to ₹5000 for testing.`);
+      amount = 5000;
+    }
+
     const options = {
       amount: amount * 100, // amount in paise
       currency: 'INR',
@@ -314,7 +322,8 @@ const createBookingOrder = async (req, res) => {
         roomId,
         hostelId,
         tenantId: req.user.id,
-        type: 'room_booking'
+        type: 'room_booking',
+        originalAmount: room.rent + room.securityDeposit // Store original amount for reference
       }
     };
 
